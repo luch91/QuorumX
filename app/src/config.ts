@@ -7,6 +7,11 @@ export interface SentinelConfig {
   maxRequestCostUsd: number;
 }
 
+export interface ProposalSourceConfig {
+  snapshotSpaces: string[];
+  allowFixtures: boolean;
+}
+
 function readNumber(env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number): number {
   const raw = env[key];
   if (raw === undefined || raw === "") return fallback;
@@ -26,5 +31,25 @@ export function loadSentinelConfig(env: NodeJS.ProcessEnv = process.env): Sentin
     maxCompletedRequests: readNumber(env, "SENTINEL_MAX_REQUESTS", 100, 1, 1_000_000),
     maxBudgetUsd: readNumber(env, "SENTINEL_MAX_BUDGET_USD", 1, 0.01, 1_000_000),
     maxRequestCostUsd: readNumber(env, "SENTINEL_MAX_REQUEST_COST_USD", 0.01, 0.000001, 1_000_000),
+  };
+}
+
+export function loadProposalSourceConfig(env: NodeJS.ProcessEnv = process.env): ProposalSourceConfig {
+  const rawSpaces = env.QUORUMX_SNAPSHOT_SPACES;
+  const snapshotSpaces = rawSpaces === undefined
+    ? ["balancer.eth"]
+    : [...new Set(rawSpaces.split(",").map((space) => space.trim().toLowerCase()).filter(Boolean))];
+  if (snapshotSpaces.length === 0) {
+    throw new Error("QUORUMX_SNAPSHOT_SPACES must include at least one Snapshot space.");
+  }
+
+  const rawFixtures = env.QUORUMX_ALLOW_FIXTURES;
+  if (rawFixtures !== undefined && rawFixtures !== "true" && rawFixtures !== "false") {
+    throw new Error("QUORUMX_ALLOW_FIXTURES must be true or false.");
+  }
+
+  return {
+    snapshotSpaces,
+    allowFixtures: rawFixtures === "true",
   };
 }

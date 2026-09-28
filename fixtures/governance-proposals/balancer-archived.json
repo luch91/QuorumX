@@ -1,0 +1,13 @@
+{
+  "canonicalId": "fixture:balancer-archived",
+  "source": {
+    "kind": "fixture",
+    "fixtureId": "balancer-archived",
+    "canonicalUrl": "https://snapshot.box/#/s:balancer.eth"
+  },
+  "title": "Archived Balancer governance proposal",
+  "bodyText": "Development fixture only. This record is not live governance evidence.",
+  "choices": ["For", "Against", "Abstain"],
+  "linkedEvidenceUrls": [],
+  "status": "closed"
+}
