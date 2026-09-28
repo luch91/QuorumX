@@ -1,8 +1,8 @@
 {
-  "name": "telegraph-cassandra",
+  "name": "quorumx",
   "version": "0.0.0",
   "private": true,
-  "description": "Telegraph Protocol program submission: DWCS (Script Author track) and Sentinel (Application track).",
+  "description": "QuorumX: GenLayer-verified governance proposal risk assessments.",
   "scripts": {
     "test": "jest",
     "test:dwcs": "jest dwcs/tests",
