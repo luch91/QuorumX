@@ -1,4 +1,4 @@
-# Cassandra
+# QuorumX
 
 Cassandra is a governance-risk pipeline built on Telegraph Protocol.
 

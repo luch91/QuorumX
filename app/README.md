@@ -1,4 +1,4 @@
-# Sentinel
+# QuorumX operator client (legacy Sentinel notes below)
 
 Sentinel uses real, paid Telegraph Miner requests to triage active Balancer governance proposals for fraud signals.
 
