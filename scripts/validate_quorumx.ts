@@ -3,6 +3,12 @@ import { createGenLayerClient } from "../app/src/genlayer/client";
 import { GenLayerGatewayImpl } from "../app/src/genlayer/gateway";
 import { SnapshotProposalSource } from "../app/src/ingest/sources/snapshot_source";
 
+export function assertReadableProbe(probeKey: string | undefined, assessment: unknown): void {
+  if (probeKey && assessment === undefined) {
+    throw new Error(`Studionet probe did not return stored state for ${probeKey}`);
+  }
+}
+
 export async function validateQuorumX(env: NodeJS.ProcessEnv = process.env): Promise<object> {
   const sources = loadProposalSourceConfig(env);
   const proposals = await new SnapshotProposalSource(sources.snapshotSpaces).listEligible();
@@ -10,6 +16,7 @@ export async function validateQuorumX(env: NodeJS.ProcessEnv = process.env): Pro
   const gateway = new GenLayerGatewayImpl(await createGenLayerClient(config), config.contractAddress);
   const probeKey = env.QUORUMX_PROBE_PROPOSAL_KEY;
   const assessment = probeKey ? await gateway.getAssessment(probeKey) : undefined;
+  assertReadableProbe(probeKey, assessment);
   return { ok: true, network: config.network, snapshotSpaces: sources.snapshotSpaces, eligibleProposals: proposals.length, contractReadable: probeKey ? assessment !== undefined : "not_probed", writesEnabled: process.argv.includes("--allow-write") };
 }
 

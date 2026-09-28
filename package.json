@@ -13,6 +13,7 @@
     "verify": "npm run test:ci && npm run typecheck && npm run build && npm run build:validator",
     "test:ci": "jest --runInBand --ci",
     "validate:quorumx": "npm run build:validator && node dist-validation/scripts/validate_quorumx.js",
+    "smoke:studionet": "npm run validate:quorumx",
     "quorumx": "node dist/src/cli.js",
     "start:sentinel": "node dist/src/legacy_cli.js",
     "legacy:telegraph": "node dist/src/legacy_cli.js",
