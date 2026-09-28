@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist-validation",
+    "noEmit": false
+  },
+  "include": ["app/src/**/*.ts", "scripts/validate_quorumx.ts"],
+  "exclude": ["app/tests", "node_modules", "dist", "dist-validation"]
+}

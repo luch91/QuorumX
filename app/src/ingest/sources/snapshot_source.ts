@@ -60,10 +60,11 @@ export class SnapshotProposalSource implements ProposalSourceAdapter {
     return normalize(record);
   }
 
-  private async query(body: object): Promise<SnapshotPayload> {
-    const response = await this.fetcher(this.endpoint, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
+  private async query(body: { query: string; variables: object }): Promise<SnapshotPayload> {
+    const url = new URL(this.endpoint);
+    url.searchParams.set("query", body.query);
+    url.searchParams.set("variables", JSON.stringify(body.variables));
+    const response = await this.fetcher(url, { method: "GET" });
     if (!response.ok) throw new ProposalSourceError(`Snapshot request failed: HTTP ${response.status}`, "unavailable");
     const payload = await response.json() as SnapshotPayload;
     if (payload.errors?.length) throw new ProposalSourceError(`Snapshot query failed: ${payload.errors.map((e) => e.message).join("; ")}`, "invalid_response");

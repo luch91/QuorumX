@@ -61,12 +61,15 @@ export interface GenLayerConfig {
   privateKey?: `0x${string}`;
 }
 
+export const STUDIONET_GOVERNANCE_RISK_ORACLE = "0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237" as const;
+
 export function loadGenLayerConfig(env: NodeJS.ProcessEnv = process.env): GenLayerConfig {
-  const network = env.QUORUMX_GENLAYER_NETWORK ?? "localnet";
+  const network = env.QUORUMX_GENLAYER_NETWORK ?? "studionet";
   if (!["localnet", "studionet", "testnetAsimov", "testnetBradbury"].includes(network)) {
     throw new Error("QUORUMX_GENLAYER_NETWORK is invalid.");
   }
-  const contractAddress = env.QUORUMX_CONTRACT_ADDRESS;
+  const contractAddress = env.QUORUMX_CONTRACT_ADDRESS
+    ?? (network === "studionet" ? STUDIONET_GOVERNANCE_RISK_ORACLE : undefined);
   if (!contractAddress || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
     throw new Error("QUORUMX_CONTRACT_ADDRESS must be a 20-byte hex address.");
   }

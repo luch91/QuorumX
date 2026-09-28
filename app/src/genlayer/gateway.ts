@@ -29,8 +29,12 @@ export class GenLayerGatewayImpl implements GenLayerGateway {
         return { transactionId, proposalKey, state: "reverted", error: receipt.error ?? execution ?? status };
       }
       if (status?.includes("UNDETERMINED")) return { transactionId, proposalKey, state: "undetermined" };
+      if (status?.includes("TIMEOUT")) return { transactionId, proposalKey, state: "undetermined", error: status };
       if (status?.includes("ACCEPT") || status?.includes("FINAL")) {
         const assessment = proposalKey ? await this.getAssessment(proposalKey) : undefined;
+        if (!assessment) {
+          return { transactionId, proposalKey, state: "undetermined", error: "Consensus accepted without stored assessment state" };
+        }
         return { transactionId, proposalKey, state: "accepted", assessment };
       }
       return { transactionId, proposalKey, state: "undetermined", error: `Unexpected transaction state: ${status ?? "unknown"}` };

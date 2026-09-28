@@ -1,78 +1,58 @@
 # QuorumX
 
-Cassandra is a governance-risk pipeline built on Telegraph Protocol.
+QuorumX is a GenLayer-powered governance-risk oracle. It selects public governance proposals, lets GenLayer validators independently retrieve the source, and stores a consensus-backed risk assessment for operator review.
 
-It helps reviewers identify proposals that need closer scrutiny by combining two distinct forms of signal quality:
+The current verified deployment is on GenLayer Studionet:
 
-- **DWCS** evaluates how well a Telegraph Miner answer matches the available ground truth.
-- **Sentinel** asks several independent Miners to assess the same proposal, then uses their agreement as a confidence signal.
+- Contract: `0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237`
+- Native Snapshot deployment transaction: `0x2fa96773ec54ae12cd0cef9f89d7a4122263ce74654a85dc6e657962713bdd84`
+- Live BIP-929 assessment transaction: `0x55131db5c1b05ac6be9b46ef86511a95f5a880b957c78270337c3b3628149268`
+- Canonical proposal key: `snapshot:balancer.eth:0x25ee897681ae8bbae5ae224b14ad6a03ea6920f768d52b2e9aa1a85b7eec0590`
 
-Telegraph provides the intelligence network and payment settlement. Cassandra provides a focused governance-review workflow on top of it.
+## Architecture
 
-## Components
+The TypeScript operator client handles source discovery, deadline and duplicate checks, transaction recovery, and redacted evidence. `GovernanceRiskOracle` is authoritative: it retrieves Snapshot data through a canonical GraphQL GET request, reaches strict consensus on the normalized source, uses source-grounded non-comparative LLM validation for the assessment, and stores only bounded fields and hashes.
 
-### DWCS
+Supported sources are Snapshot, public HTTPS URLs, and explicitly enabled archived fixtures. Fixtures always retain fixture provenance. Telegraph remains available only through the explicit legacy command; QuorumX never silently falls back to paid Telegraph requests.
 
-Disagreement-Weighted Canonical Scoring is a standalone WASM scoring module for `FRAUD_DETECTION`.
-
-It combines normalized word overlap, stopword-weighted overlap, bigram Jaccard similarity, and longest-common-subsequence ratio. When those metrics disagree, the final score is dampened to reduce the benefit of keyword stuffing or other shallow answer imitation.
-
-Its runtime interface returns one `f32` score from `0` to `1`. It has no network access, filesystem access, or persistent state.
-
-### Sentinel
-
-Sentinel is the application layer. It reads active proposals from the public `balancer.eth` Snapshot space, discovers compatible live Telegraph Miners through the public registry, submits real x402 requests, and compares answers across Miners. It records every completed paid request in an append-only local ledger and only records Layer 1 evidence after independent receipt verification succeeds.
-
-High agreement increases confidence. Low agreement indicates that the proposal should receive human review.
-
-The x402 settlement is Sentinel's Layer 1 on-chain evidence. Layer 2, an external governance-contract flag write, is deliberately excluded because Snapshot spaces do not expose a universal, verified flagging interface. Automated polling never reprocesses a proposal after a recorded paid request, preventing duplicate traffic.
-
-## Repository
-
-```text
-app/                  Sentinel application
-dwcs/rust-module/     Deployable DWCS WASM module
-dwcs/src/             TypeScript scoring prototype
-dwcs/canaries/        Local held-out adversarial cases
-scripts/              Build and validation helpers
-```
-
-## Verification and submission status
-
-DWCS is built for `wasm32-unknown-unknown` and validated as a zero-import WASM module. The repository includes Rust and TypeScript tests for its deterministic scoring logic, Snapshot ingestion, and Sentinel's agreement-based triage behavior. A single owner-authorized Sentinel contingency request is documented in GitHub issue #16 with a verified x402 receipt. It used a closed Balancer proposal because no active proposal was available, so it does not prove active-vote production behavior.
-
-DWCS registration is a separate owner-authorized on-chain action and is not claimed as complete by this repository. Track 2 submission status is managed by the project owner.
-
-## Sentinel usage metrics
-
-Usage is measured only from completed, attributable records in the append-only request ledger. The metrics command never sends requests and never fabricates activity:
+## Setup
 
 ```bash
+npm ci
 npm run build
-npm run metrics:sentinel
 ```
 
-The output reports completed requests, distinct proposal IDs, total cost, a target of 100 real requests, and whether that target has been reached. The current checkout's local ledger reports `0` completed requests, `0` unique proposals, `$0` cost, and `targetReached: false`. The separately documented one-request contingency smoke test is receipt evidence, not volume generation, and is not inserted into the ledger retroactively.
+Studionet and the verified contract are the application defaults. Copy `.env.example` only when overriding configuration or submitting a new transaction. Never commit a private key. A write requires `QUORUMX_GENLAYER_PRIVATE_KEY`; reads do not intentionally spend GEN.
 
-The continuous runner enforces `SENTINEL_MAX_REQUESTS=100` and `SENTINEL_MAX_BUDGET_USD=1` before every paid Miner call. It also reserves `SENTINEL_MAX_REQUEST_COST_USD=0.01` per call by default, and stops permanently when either ceiling would be crossed. If Snapshot has no eligible active proposal, the cycle makes no payment.
+Useful commands:
 
-## No-UI operation
+```bash
+npm run quorumx -- sources check --json
+npm run quorumx -- proposals list --json
+npm run quorumx -- assessment get <proposal-key> --json
+npm run quorumx -- assess --source snapshot --proposal <snapshot-id> --json
+npm run validate:quorumx
+```
 
-Cassandra has no web UI. The supported operator surface is the CLI and the JSONL evidence files it produces. Use `npm run preflight:sentinel` for a free registry check, `npm run metrics:sentinel` for usage reporting, and the continuously running `npm run start:sentinel` only when a funded wallet and explicit paid-request authorization are available. Keep `data/` and `.sentinel-evidence/` local and redact secrets before sharing evidence.
+`assess` first checks for existing contract state, so an already assessed proposal does not create another transaction. Local transaction evidence is written to `.quorumx-evidence/transactions.jsonl`, which is ignored by Git.
 
-## Submission checklist
+## Costs and trust boundaries
 
-- [x] Sentinel code, receipt verification, proposal ingestion, retry guard, and ledger metrics are implemented and locally tested.
-- [x] One authorized contingency receipt is documented and independently verified in GitHub issue #16.
-- [x] The local usage metric is reproducible and non-gamed. Current result: `0/100` real requests.
-- [ ] DWCS registration and live status are confirmed on Telegraph.
-- [ ] The 100-real-request guardrail is reached and evidenced. Synthetic traffic is prohibited.
-- [ ] Final demo and application write-up are supplied by the project owner.
+- Deployments and assessments consume development-network GEN; read-only checks do not intentionally submit transactions.
+- Proposal text is untrusted prompt data.
+- Snapshot identity and normalized content are checked before storage.
+- Accepted consensus without readable stored state is reported as undetermined, never accepted.
+- Public URL inputs must be HTTPS and cannot target local or private addresses.
+- No Snapshot proposal is modified, flagged, or written back.
+- Fixture evidence is never represented as live evidence.
 
-The unchecked items are external or authorization-gated deliverables. They are intentionally not represented as complete by this repository.
+## Verification
 
-## Safety boundaries
+```bash
+npm test -- --runInBand
+npm run typecheck
+npm run build
+py -3.12 -m pytest contracts/tests -q
+```
 
-- Sentinel production paths use real Telegraph endpoints only.
-- DWCS performs deterministic computation over its input strings only.
-- Canary data, private keys, wallet files, and payment material are excluded from version control.
+DWCS remains a separate optional scoring module. The former Sentinel Telegraph workflow is retained under `npm run legacy:telegraph` during the hybrid migration.

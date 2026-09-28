@@ -23,9 +23,12 @@ describe("SnapshotProposalSource", () => {
       choices: ["For", "Against"],
       status: "active",
     }));
-    expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      body: expect.stringContaining("balancer.eth"),
-    }));
+    const [requestedUrl, init] = fetcher.mock.calls[0] as [URL, RequestInit];
+    expect(init).toEqual({ method: "GET" });
+    expect(JSON.parse(requestedUrl.searchParams.get("variables") ?? "{}")).toEqual({
+      spaces: ["balancer.eth", "genlayer.eth"],
+    });
+    expect(requestedUrl.searchParams.get("query")).toContain("proposals(first: 20");
   });
 
   it("gets an explicitly requested archived proposal", async () => {

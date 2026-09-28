@@ -9,6 +9,8 @@
     "test:app": "jest app/tests",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "build:validator": "tsc -p tsconfig.validation.json",
+    "validate:quorumx": "npm run build:validator && node dist-validation/scripts/validate_quorumx.js",
     "quorumx": "node dist/src/cli.js",
     "start:sentinel": "node dist/src/legacy_cli.js",
     "legacy:telegraph": "node dist/src/legacy_cli.js",

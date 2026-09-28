@@ -38,6 +38,24 @@ describe("GenLayerGatewayImpl", () => {
     expect(port.writeContract).not.toHaveBeenCalled();
   });
 
+  it("does not report accepted consensus without stored assessment state", async () => {
+    const gateway = new GenLayerGatewayImpl(client(), address);
+    await expect(gateway.waitForAssessment("0xtx", "snapshot:gen.eth:p-1")).resolves.toMatchObject({
+      state: "undetermined",
+      error: "Consensus accepted without stored assessment state",
+    });
+  });
+
+  it("maps validator and leader timeouts without claiming acceptance", async () => {
+    const gateway = new GenLayerGatewayImpl(client({
+      waitForTransactionReceipt: jest.fn().mockResolvedValue({ statusName: "LEADER_TIMEOUT" }),
+    }), address);
+    await expect(gateway.waitForAssessment("0xtx", "snapshot:gen.eth:p-1")).resolves.toMatchObject({
+      state: "undetermined",
+      error: "LEADER_TIMEOUT",
+    });
+  });
+
   it("decodes an accepted assessment and preserves fixture provenance", async () => {
     const raw = JSON.stringify({ proposal_key: "fixture:archived", locator_hash: "source", content_hash: "content", risk_level: "high", score: 88, categories: ["governance"], recommendation: "manual_review", summary: "Review", assessed_at: "2026-09-28T00:00:00Z", source_kind: "fixture" });
     const gateway = new GenLayerGatewayImpl(client({ readContract: jest.fn().mockResolvedValue(raw) }), address);

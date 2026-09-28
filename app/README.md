@@ -1,57 +1,17 @@
-# QuorumX operator client (legacy Sentinel notes below)
+# QuorumX operator client
 
-Sentinel uses real, paid Telegraph Miner requests to triage active Balancer governance proposals for fraud signals.
+The operator client discovers governance proposals, submits canonical source references to GenLayer, follows consensus, reads stored assessments, and records redacted local evidence.
 
-## The corrected architecture
+Studionet defaults to `GovernanceRiskOracle` at `0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237`. Set `QUORUMX_GENLAYER_PRIVATE_KEY` only for a write. Keep keys outside repository files and use a dedicated, limited-balance development account.
 
-Sentinel does **not** call DWCS directly. DWCS is a WASM module invoked internally by Telegraph's validators with a `ground_truth` string Sentinel never has access to, there's no channel for an application to invoke a registered scoring module. Instead, Sentinel's confidence signal comes from **querying multiple independent, live miners for the same question and checking whether their answers agree.** Low agreement means low confidence, same underlying "disagreement as signal" idea DWCS uses, just computed over live miner outputs at the application layer instead of inside the WASM sandbox against a known ground truth.
+```bash
+npm run build
+npm run quorumx -- sources check --json
+npm run quorumx -- proposals list --json
+npm run quorumx -- assessment get snapshot:balancer.eth:<proposal-id> --json
+npm run quorumx -- assess --source snapshot --proposal <proposal-id> --json
+```
 
-## Governance source
+Snapshot discovery uses GraphQL GET. The assessment workflow checks stored state before submission, writes `submitted` evidence before waiting, and can resume from a recorded transaction ID without resubmitting. Accepted consensus is surfaced as accepted only when the matching assessment is readable from contract state.
 
-Sentinel reads active proposals from the public `balancer.eth` Snapshot space through Snapshot's GraphQL API. Snapshot provides the proposal title, body, state, and timestamps Sentinel needs. This source is read-only.
-
-Layer 1 is the real on-chain payment receipt produced by each x402 request. Layer 2 is intentionally not implemented: Snapshot spaces do not provide a universal governance-contract function for externally flagging a proposal, and Cassandra will not invent one. An escalation is instead surfaced for human review with its verified Layer 1 receipt. Agreement alone never escalates a proposal: at least two Miners must also return explicit structured fraud-risk signals.
-
-## Non-negotiable reminders
-
-- Production code in `src/` must never mock or simulate a Miner response. Test fixtures in `tests/` are fine and clearly labeled.
-- `MIN_MINER_SAMPLE_SIZE` (currently 3) exists because sampling only 1 miner makes an agreement score meaningless by construction, don't lower it to make a demo look easier.
-- Layer 2 remains excluded for this Snapshot source. Do not invent a governance-contract flag interface.
-
-## Running Sentinel
-
-Build with `npm run build`, then run continuously with `npm run start:sentinel`.
-
-Required for real operation: set `EVM_PRIVATE_KEY` to a funded Base Sepolia wallet and `SENTINEL_ALLOW_PAID_REQUESTS=true` for that process. Every inference request is paid and sent only to live Telegraph endpoints. Use a dedicated wallet with a limited balance. A wallet alone cannot trigger spending.
-
-Sentinel reads Telegraph's public integration registry on every cycle and selects only active `FRAUD_DETECTION` miners which declare a POST endpoint accepting a `query` field with no other required input. It does not hardcode a miner, endpoint, or schema.
-
-Configuration defaults are deliberately conservative:
-
-- `SENTINEL_ESCALATION_THRESHOLD=0.85`, accepted range 0.5 to 1.
-- `SENTINEL_MIN_REMAINING_VOTE_MINUTES=60`, Sentinel skips proposals inside this pre-vote review buffer.
-- `SENTINEL_POLL_INTERVAL_MS=900000`, minimum 60000 ms.
-- `SENTINEL_MAX_REQUESTS=100`, hard maximum completed paid requests.
-- `SENTINEL_MAX_BUDGET_USD=1`, hard cumulative request budget in USDC units.
-- `SENTINEL_MAX_REQUEST_COST_USD=0.01`, maximum expected cost reserved before each paid request.
-- `SENTINEL_REQUEST_LEDGER=data/sentinel-request-ledger.jsonl`, append-only paid-request attribution ledger.
-- `SENTINEL_RECEIPT_LOG=data/sentinel-layer1-receipts.jsonl`, append-only verified receipt evidence.
-
-Sentinel writes an attempt ledger before inference and a request ledger after each completed paid request. This prevents polling from generating duplicate or synthetic traffic, including after a process interruption. Failed attempts require an explicit human decision before retrying. Real request records are gitignored and must be exported explicitly for submission evidence.
-
-Before every paid request, Sentinel re-reads the usage ledger and stops permanently when either the completed-request limit or cumulative budget would be reached. The guard is applied before each Miner in the three-Miner sample, not only once per polling cycle. The runner does not schedule another poll after the guard stops it. Because a route's final price is returned only after payment, `SENTINEL_MAX_REQUEST_COST_USD` must be set no lower than the live declared route price; otherwise Sentinel stops before spending. No payment occurs while the Snapshot source has no eligible active proposal.
-
-Use `npm run preflight:sentinel` after a build to make a free registry-only check that enough compatible miners exist. Use `npm run metrics:sentinel` to report completed attributable requests, distinct proposals, total cost, and progress toward 100 requests. Neither command makes a paid request.
-
-The usage metric is intentionally ledger-based. It counts only completed records containing both a proposal ID and Miner ID, and it never imports or invents activity. A missing ledger is reported as zero. The current checkout therefore reports zero attributable volume. The separately documented one-request contingency smoke test proves receipt handling but is not volume generation and is not added to the ledger retroactively.
-
-For a bounded receipt diagnostic, set `SENTINEL_SMOKE_QUERY` and
-`SENTINEL_ALLOW_PAID_REQUESTS=true`, then run `npm run smoke:sentinel`.
-It makes exactly one paid request, performs no retries or loop, and writes only
-redacted receipt metadata under `.sentinel-evidence/`.
-
-## Evidence and submission boundaries
-
-Sentinel fails closed if a paid response lacks `signal_hash`, if the readback hash differs, if the result is not successful, or if Telegraph does not report cryptographic verification. The completed one-request contingency evidence in issue #16 confirms the live readback route and records the payment transaction, signal hash, `keccak256` algorithm, `payload` commitment, and verified result. It used a closed Balancer proposal because the active-proposal preflight returned zero results.
-
-Do not treat the contingency smoke test as proof of active-vote production behavior or as progress toward the 100-request guardrail. Do not run additional paid requests without explicit authorization. There is no UI; use the CLI commands and redacted JSONL evidence described above.
+Archived fixtures require `QUORUMX_ALLOW_FIXTURES=true` and remain labelled `fixture`. GenLayer failures do not trigger Telegraph payments. The old paid workflow is isolated behind `npm run legacy:telegraph`; its budget and explicit authorization controls remain in force.
