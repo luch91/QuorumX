@@ -19,7 +19,8 @@ import {
 import { appendProposalAttempt, readAttemptedProposalIds } from "./usage/proposal_attempts";
 import { extractRiskSignal } from "./scoring/risk_signal";
 
-export function isActionableBeforeDeadline(proposal: { votingEndsAt: string }, config: SentinelConfig, now = new Date()): boolean {
+export function isActionableBeforeDeadline(proposal: { votingEndsAt?: string }, config: SentinelConfig, now = new Date()): boolean {
+  if (!proposal.votingEndsAt) return false;
   const deadline = new Date(proposal.votingEndsAt).getTime() - config.minimumRemainingVoteMinutes * 60_000;
   return Number.isFinite(deadline) && now.getTime() < deadline;
 }
@@ -38,22 +39,22 @@ export async function runSentinelCycle(config = loadSentinelConfig()): Promise<v
   const attemptedProposalIds = await readAttemptedProposalIds();
 
   for (const proposal of proposals) {
-    if (processedProposalIds.has(proposal.id) || attemptedProposalIds.has(proposal.id)) {
-      console.log(`Proposal ${proposal.id} has already been attempted, skipping to prevent duplicate traffic.`);
+    if (processedProposalIds.has(proposal.canonicalId) || attemptedProposalIds.has(proposal.canonicalId)) {
+      console.log(`Proposal ${proposal.canonicalId} has already been attempted, skipping to prevent duplicate traffic.`);
       continue;
     }
     if (!isActionableBeforeDeadline(proposal, config)) {
-      console.log(`Proposal ${proposal.id} is too close to its voting deadline, skipping.`);
+      console.log(`Proposal ${proposal.canonicalId} is too close to its voting deadline, skipping.`);
       continue;
     }
     const query = `Does this governance proposal show signs of fraud or fabricated evidence? Proposal: ${proposal.title}\n\n${proposal.bodyText}`;
 
-    await appendProposalAttempt(proposal.id, "FRAUD_DETECTION");
+    await appendProposalAttempt(proposal.canonicalId, "FRAUD_DETECTION");
     const askResults = await askMultipleMiners(
       "FRAUD_DETECTION",
       query,
       MIN_MINER_SAMPLE_SIZE,
-      (result) => appendRequestLedger(proposal.id, "FRAUD_DETECTION", result),
+      (result) => appendRequestLedger(proposal.canonicalId, "FRAUD_DETECTION", result),
       assertBudget,
     );
 
@@ -68,13 +69,13 @@ export async function runSentinelCycle(config = loadSentinelConfig()): Promise<v
 
     // Verify each Layer 1 receipt independently before reporting it as evidence.
     const receipts = await verifyLayer1Receipts(askResults);
-    await appendLayer1Evidence(proposal.id, decision, receipts);
-    console.log(`Proposal ${proposal.id}: ${decision.action}, ${decision.reason}`, receipts);
+    await appendLayer1Evidence(proposal.canonicalId, decision, receipts);
+    console.log(`Proposal ${proposal.canonicalId}: ${decision.action}, ${decision.reason}`, receipts);
 
     if (decision.action === "escalate_for_review") {
       // Snapshot does not offer a universal governance-contract flag write.
       // Preserve the real payment receipt and hand this case to human review.
-      console.log(`Proposal ${proposal.id} requires human review.`);
+      console.log(`Proposal ${proposal.canonicalId} requires human review.`);
     }
   }
 }

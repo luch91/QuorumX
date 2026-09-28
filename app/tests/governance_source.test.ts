@@ -18,6 +18,8 @@ describe("Snapshot governance source", () => {
               body: "Review details: https://example.org/evidence and https://example.org/evidence",
               created: 1_787_304_511,
               end: 1_787_390_911,
+              state: "active",
+              choices: ["For", "Against"],
               space: { id: "balancer.eth", name: "Balancer" },
             },
           ],
@@ -27,13 +29,15 @@ describe("Snapshot governance source", () => {
 
     await expect(fetchPendingProposals()).resolves.toEqual([
       {
-        id: "proposal-1",
-        source: "snapshot:balancer.eth",
+        canonicalId: "snapshot:balancer.eth:proposal-1",
+        source: { kind: "snapshot", space: "balancer.eth", proposalId: "proposal-1" },
         title: "Fund security review",
         bodyText: "Review details: https://example.org/evidence and https://example.org/evidence",
+        choices: ["For", "Against"],
         linkedEvidenceUrls: ["https://example.org/evidence"],
         submittedAt: "2026-08-21T09:28:31.000Z",
         votingEndsAt: "2026-08-22T09:28:31.000Z",
+        status: "active",
       },
     ]);
 
