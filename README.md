@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/luch91/QuorumX/actions/workflows/ci.yml/badge.svg)](https://github.com/luch91/QuorumX/actions/workflows/ci.yml)
 [![Demo](https://github.com/luch91/QuorumX/actions/workflows/pages.yml/badge.svg)](https://luch91.github.io/QuorumX/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 QuorumX is a GenLayer-powered governance-risk oracle. GenLayer validators independently retrieve a public governance proposal, agree on normalized source material, assess bounded risk fields, and preserve the consensus-backed result for reviewers.
 
@@ -102,4 +103,4 @@ The former Cassandra/Sentinel Telegraph path remains available only through the 
 
 ## License
 
-No license has been granted yet. Source is publicly viewable, but conventional copyright restrictions apply until the project owner selects a license.
+Licensed under the [Apache License 2.0](LICENSE). It permits commercial and private use, modification, and distribution while preserving notices and providing an explicit patent grant. No rights to the QuorumX name or marks are granted.
