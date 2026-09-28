@@ -2,6 +2,8 @@ node_modules/
 dist/
 .env
 *.log
+__pycache__/
+*.py[cod]
 
 # Locally generated receipt and request evidence may contain real on-chain
 # identifiers and must be exported deliberately, never committed.
