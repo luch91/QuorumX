@@ -9,10 +9,12 @@
     "test:app": "jest app/tests",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "start:sentinel": "node dist/app/src/cli.js",
-    "smoke:sentinel": "node dist/app/src/smoke_cli.js",
-    "preflight:sentinel": "node dist/app/src/preflight_cli.js",
-    "metrics:sentinel": "node dist/app/src/metrics_cli.js",
+    "quorumx": "node dist/src/cli.js",
+    "start:sentinel": "node dist/src/legacy_cli.js",
+    "legacy:telegraph": "node dist/src/legacy_cli.js",
+    "smoke:sentinel": "node dist/src/smoke_cli.js",
+    "preflight:sentinel": "node dist/src/preflight_cli.js",
+    "metrics:sentinel": "node dist/src/metrics_cli.js",
     "check:open-questions": "bash scripts/check_open_questions.sh"
   },
   "devDependencies": {

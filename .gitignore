@@ -9,6 +9,7 @@ __pycache__/
 # identifiers and must be exported deliberately, never committed.
 data/
 .sentinel-evidence/
+.quorumx-evidence/
 
 # Locally generated receipt and request evidence. These may contain real
 # on-chain identifiers and must be exported deliberately, never committed.
