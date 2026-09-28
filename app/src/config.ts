@@ -53,3 +53,35 @@ export function loadProposalSourceConfig(env: NodeJS.ProcessEnv = process.env): 
     allowFixtures: rawFixtures === "true",
   };
 }
+
+export interface GenLayerConfig {
+  network: "localnet" | "studionet" | "testnetAsimov" | "testnetBradbury";
+  rpcUrl?: string;
+  contractAddress: `0x${string}`;
+  privateKey?: `0x${string}`;
+}
+
+export function loadGenLayerConfig(env: NodeJS.ProcessEnv = process.env): GenLayerConfig {
+  const network = env.QUORUMX_GENLAYER_NETWORK ?? "localnet";
+  if (!["localnet", "studionet", "testnetAsimov", "testnetBradbury"].includes(network)) {
+    throw new Error("QUORUMX_GENLAYER_NETWORK is invalid.");
+  }
+  const contractAddress = env.QUORUMX_CONTRACT_ADDRESS;
+  if (!contractAddress || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
+    throw new Error("QUORUMX_CONTRACT_ADDRESS must be a 20-byte hex address.");
+  }
+  const rpcUrl = env.QUORUMX_GENLAYER_RPC_URL;
+  if (rpcUrl && !["http:", "https:"].includes(new URL(rpcUrl).protocol)) {
+    throw new Error("QUORUMX_GENLAYER_RPC_URL must be HTTP or HTTPS.");
+  }
+  const privateKey = env.QUORUMX_GENLAYER_PRIVATE_KEY;
+  if (privateKey && !/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
+    throw new Error("QUORUMX_GENLAYER_PRIVATE_KEY must be a 32-byte hex key.");
+  }
+  return {
+    network: network as GenLayerConfig["network"],
+    contractAddress: contractAddress as `0x${string}`,
+    ...(rpcUrl ? { rpcUrl } : {}),
+    ...(privateKey ? { privateKey: privateKey as `0x${string}` } : {}),
+  };
+}
