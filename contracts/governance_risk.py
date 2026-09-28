@@ -8,8 +8,8 @@ import json
 from urllib.parse import urlparse
 
 
-RISK_LEVELS = ("low", "medium", "high", "critical")
-RECOMMENDATIONS = ("approve", "review", "reject")
+RISK_LEVELS = ("low", "medium", "high")
+RECOMMENDATIONS = ("allow", "manual_review", "block")
 CATEGORIES = (
     "execution", "governance", "liquidity", "market", "oracle",
     "security", "smart_contract", "treasury",

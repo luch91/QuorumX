@@ -36,7 +36,7 @@ class GovernanceRiskRulesTest(unittest.TestCase):
             "risk_level": "medium",
             "score": 51,
             "categories": ["execution", "governance"],
-            "recommendation": "review",
+            "recommendation": "manual_review",
             "summary": "Material execution assumptions need review.",
         }
         value.update(overrides)
