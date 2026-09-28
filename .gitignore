@@ -2,6 +2,8 @@ node_modules/
 dist/
 dist-validation/
 .env
+.env.*
+!.env.example
 *.log
 __pycache__/
 *.py[cod]
@@ -15,6 +17,11 @@ data/
 # Locally generated receipt and request evidence. These may contain real
 # on-chain identifiers and must be exported deliberately, never committed.
 data/
+
+# Local planning and agent artifacts are deliberately never published.
+.local/
+.superpowers/
+.pytest_cache/
 
 # Rust build artifacts, never commit compiled WASM binaries either, they
 # should be built fresh and hashed at registration time.
@@ -32,3 +39,6 @@ dwcs/canaries/dataset.jsonl
 *.md
 !README.md
 !**/README.md
+!.github/**/*.md
+!SECURITY.md
+!CONTRIBUTING.md

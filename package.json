@@ -1,6 +1,6 @@
 {
   "name": "quorumx",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "QuorumX: GenLayer-verified governance proposal risk assessments.",
   "scripts": {
@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "build:validator": "tsc -p tsconfig.validation.json",
+    "verify": "npm run test:ci && npm run typecheck && npm run build && npm run build:validator",
+    "test:ci": "jest --runInBand --ci",
     "validate:quorumx": "npm run build:validator && node dist-validation/scripts/validate_quorumx.js",
     "quorumx": "node dist/src/cli.js",
     "start:sentinel": "node dist/src/legacy_cli.js",
