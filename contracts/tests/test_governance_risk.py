@@ -4,6 +4,7 @@ import pathlib
 import sys
 import types
 import unittest
+from urllib.parse import parse_qs, urlparse
 
 
 def load_contract_module():
@@ -42,20 +43,21 @@ class GovernanceRiskRulesTest(unittest.TestCase):
         value.update(overrides)
         return value
 
-    def test_accepts_equivalent_decisions_with_different_summaries(self):
-        leader = self.assessment()
-        validator = self.assessment(score=56, summary="Different but valid wording.")
-        self.assertTrue(self.module.assessments_equivalent(leader, validator))
+    def test_builds_canonical_snapshot_graphql_get_url(self):
+        proposal_id = "0xabc"
+        url = urlparse(self.module.snapshot_proposal_url(proposal_id))
+        params = parse_qs(url.query)
+        self.assertEqual((url.scheme, url.netloc, url.path), ("https", "hub.snapshot.org", "/graphql"))
+        self.assertEqual(json.loads(params["variables"][0]), {"id": proposal_id})
+        self.assertIn("proposal(id: $id)", params["query"][0])
 
-    def test_score_tolerance_boundary(self):
-        leader = self.assessment(score=50)
-        self.assertTrue(self.module.assessments_equivalent(leader, self.assessment(score=55)))
-        self.assertFalse(self.module.assessments_equivalent(leader, self.assessment(score=56)))
+    def test_accepts_sdk_decoded_assessment_output(self):
+        value = {"risk_level": "high", "score": 80}
+        self.assertIs(self.module.parse_assessment_output(value), value)
 
-    def test_rejects_changed_identity_or_content(self):
-        leader = self.assessment()
-        self.assertFalse(self.module.assessments_equivalent(leader, self.assessment(proposal_key="other")))
-        self.assertFalse(self.module.assessments_equivalent(leader, self.assessment(content_hash="b" * 64)))
+    def test_accepts_fenced_json_assessment_output(self):
+        value = self.module.parse_assessment_output('```json\n{"risk_level":"high","score":80}\n```')
+        self.assertEqual(value, {"risk_level": "high", "score": 80})
 
     def test_rejects_unknown_category_and_invalid_score(self):
         with self.assertRaises(ValueError):
