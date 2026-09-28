@@ -136,6 +136,28 @@ def _source_url(source) -> str:
         return "https://hub.snapshot.org/graphql"
     return source.get("url", source.get("canonicalUrl"))
 
+def _fetch_material(source) -> str:
+    if source["kind"] == "snapshot":
+        response = gl.nondet.web.request(
+            "https://hub.snapshot.org/graphql", method="POST",
+            body={
+                "query": "query Proposal($id: String!) { proposal(id: $id) { id title body choices state space { id } } }",
+                "variables": {"id": source["proposalId"]},
+            },
+        )
+        payload = json.loads(response.body.decode("utf-8"))
+        proposal = payload.get("data", {}).get("proposal")
+        if not proposal or proposal.get("id") != source["proposalId"] or proposal.get("space", {}).get("id") != source["space"]:
+            raise gl.vm.UserError("Snapshot proposal was not found or identity changed")
+        return canonical_json({
+            "id": proposal["id"], "space": proposal["space"]["id"],
+            "title": proposal.get("title", ""), "body": proposal.get("body", ""),
+            "choices": proposal.get("choices", []), "state": proposal.get("state", ""),
+        })
+    response = gl.nondet.web.get(_source_url(source))
+    return response.body.decode("utf-8") if isinstance(response.body, bytes) else str(response.body)
+
+
 
 def _assessment_prompt(source, body: str) -> str:
     key = proposal_key(source)
@@ -175,9 +197,10 @@ class GovernanceRiskOracle(gl.Contract):
 
         def evaluate():
             local_source = json.loads(source_memory)
-            response = gl.nondet.web.get(_source_url(local_source))
-            body = response.body.decode("utf-8") if isinstance(response.body, bytes) else str(response.body)
-            result = gl.nondet.exec_prompt(_assessment_prompt(local_source, body), response_format="json")
+            material = _fetch_material(local_source)
+            result = gl.nondet.exec_prompt(_assessment_prompt(local_source, material), response_format="json")
+            result["proposal_key"] = proposal_key(local_source)
+            result["content_hash"] = sha256_text(material)
             return normalize_assessment(result)
 
         def validate(leader_result) -> bool:
@@ -194,6 +217,7 @@ class GovernanceRiskOracle(gl.Contract):
             **bounded,
             "source_kind": source["kind"],
             "locator_hash": sha256_text(canonical_json(source)),
+            "assessed_at": gl.message_raw["datetime"],
         })
         self.assessments[key] = record
         self.idempotency[idem] = key
