@@ -96,6 +96,8 @@ The command checks existing contract state first, preventing duplicate writes. L
 
 CI runs the complete Jest suite, TypeScript type-check/builds, Python contract tests, GenVM static lint, dependency audit, and full-history secret scanning. GitHub Pages deploys only the static `index.html`; it receives no wallet key and cannot submit transactions.
 
+The separate `Studionet smoke` workflow runs after relevant changes, on demand, and daily. It fetches live Snapshot proposals and reads the canonical stored assessment from the verified Studionet contract. It has no private key, cannot submit a transaction, and fails when the expected contract record is unavailable.
+
 The former Cassandra/Sentinel Telegraph path remains available only through the explicit `npm run legacy:telegraph` command during the hybrid migration. DWCS is a separate optional scoring module and is not part of the authoritative QuorumX consensus path.
 
 ## License

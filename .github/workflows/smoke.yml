@@ -1,0 +1,42 @@
+name: Studionet smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+  push:
+    branches: [main]
+    paths:
+      - app/src/genlayer/**
+      - app/src/ingest/sources/snapshot_source.ts
+      - scripts/validate_quorumx.ts
+      - package.json
+      - package-lock.json
+      - .github/workflows/smoke.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studionet-smoke
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Read-only live probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      QUORUMX_GENLAYER_NETWORK: studionet
+      QUORUMX_CONTRACT_ADDRESS: "0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237"
+      QUORUMX_SNAPSHOT_SPACES: balancer.eth
+      QUORUMX_PROBE_PROPOSAL_KEY: "snapshot:balancer.eth:0x25ee897681ae8bbae5ae224b14ad6a03ea6920f768d52b2e9aa1a85b7eec0590"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Probe Snapshot and stored Studionet assessment
+        run: npm run smoke:studionet
