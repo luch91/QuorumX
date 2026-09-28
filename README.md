@@ -90,7 +90,7 @@ The command checks existing contract state first, preventing duplicate writes. L
 
 ## GenVM semantic-linter status
 
-`genvm-lint lint` passes all three static safety checks. The separate SDK-backed `genvm-lint check` phase currently returns `E101` because `genvm-linter 0.11.0` requests an upstream GenVM release asset that responds with HTTP 404. CI tolerates only that exact known failure; every other semantic-linter error fails the build. Live Studionet deployment and execution provide additional runtime evidence while the upstream packaging mismatch remains unresolved.
+`genvm-lint lint` passes all three static safety checks. The separate SDK-backed `genvm-lint check` phase currently returns `E101` because `genvm-linter 0.11.0` requests an upstream GenVM release asset that responds with HTTP 404. CI tolerates only that exact known failure; every other semantic-linter error fails the build. Live Studionet deployment and execution provide additional runtime evidence while [upstream issue #27](https://github.com/genlayerlabs/genvm-linter/issues/27) tracks the packaging mismatch.
 
 ## Development
 
