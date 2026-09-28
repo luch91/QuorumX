@@ -2,6 +2,7 @@
   "name": "quorumx",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "QuorumX: GenLayer-verified governance proposal risk assessments.",
   "scripts": {
     "test": "jest",

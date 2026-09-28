@@ -13,8 +13,8 @@ The crate is `no_std` and the panic handler is disabled only for host tests. Thi
 ## Build the real WASM binary
 
 ```
-rustup target add wasm32-unknown-unknown
-cargo build --release --target wasm32-unknown-unknown
+rustup toolchain install 1.98.0 --profile minimal --target wasm32-unknown-unknown
+cargo +1.98.0 build --release --target wasm32-unknown-unknown
 ```
 
 Output: `target/wasm32-unknown-unknown/release/dwcs_scoring_module.wasm`
