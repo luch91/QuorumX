@@ -1,6 +1,6 @@
 # QuorumX database
 
-QuorumX v0.2 uses Neon Postgres as the durable index for discovered proposals, immutable proposal revisions, assessment jobs, GenLayer transactions, and finalized assessments. GenLayer remains authoritative for risk consensus; Postgres indexes and presents that state.
+QuorumX v0.2 uses Neon Postgres as the durable index for discovered proposals, immutable proposal revisions, assessment jobs, GenLayer transactions, and finalized assessments. GenLayer remains authoritative for risk consensus; Postgres indexes and presents that state. Runtime job claims use row locking with `SKIP LOCKED`, bounded exponential retry, and stale-lock recovery.
 
 ## Migration order
 

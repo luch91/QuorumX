@@ -54,6 +54,8 @@ QuorumX has been deployed and exercised against a real Snapshot proposal on GenL
 | Stored decision | `high` risk · `78/100` · `manual_review` |
 | Provenance | Live Snapshot retrieval inside the Intelligent Contract |
 
+The v0.2 indexer also discovered and submitted [BIP-928](https://snapshot.box/#/s:balancer.eth/proposal/0xeae4f8bab6f2fbfe22cfeae51ec336ef238c82e6e0017ee511ee67995235d53d) automatically. Its [accepted transaction](https://explorer-studio.genlayer.com/tx/0x6c5cfc8dee384896e4129ac5682d1168627416ec9d2596b4aee0a5d056f1cd85) is indexed at `api.quorumx.dev` with a `high` risk, `80/100`, `manual_review` result and `submitted_transaction` provenance.
+
 Canonical key:
 
 ```text
@@ -88,24 +90,36 @@ CLI · proof inspector · governance integrations
 | GenLayer validators | Independently observe and validate nondeterministic work | Trusting local operator evidence |
 | Proof inspector | Present verified evidence and inspect Snapshot identities | Signing transactions or holding keys |
 
-### v0.2 indexing foundation
+### v0.2 automatic governance indexer
 
-The first v0.2 infrastructure slice is live. A Cloudflare Worker at [api.quorumx.dev](https://api.quorumx.dev) reaches an isolated Neon Postgres project through Cloudflare Hyperdrive. The database stores discovery and delivery state; it does not replace GenLayer as the authority for assessments.
+The v0.2 backend is live. A Cloudflare Worker at [api.quorumx.dev](https://api.quorumx.dev) polls Snapshot every five minutes, fingerprints proposal revisions, durably claims eligible assessment jobs, submits them to GenLayer, recovers finality, and exposes the indexed result through a public API. It reaches an isolated Neon Postgres project through Cloudflare Hyperdrive. The database stores discovery and delivery state; it does not replace GenLayer as the authority for assessments.
 
 ```text
-Snapshot / GEN sources
-        │ scheduled discovery (next v0.2 slice)
+Snapshot governance spaces
+        │ scheduled discovery every five minutes
         ▼
 Cloudflare Worker · api.quorumx.dev
         │ HYPERDRIVE binding
         ▼
-Neon Postgres · proposals · revisions · jobs · transactions · assessments
+Neon Postgres · proposals · immutable revisions · durable jobs · transactions
         │ assessment submission and finality tracking
         ▼
 GovernanceRiskOracle on GenLayer
 ```
 
-`GET /health` exercises the deployed Worker, Hyperdrive, and Neon database together. The runtime database role is SQL-managed and intentionally lacks `DELETE`, schema ownership, DDL, and Neon's broad `neon_superuser` membership.
+`GET /health` exercises the deployed Worker, Hyperdrive, and Neon database together. Atomic `FOR UPDATE SKIP LOCKED` claiming and stale-lock recovery prevent concurrent cron invocations from processing the same job. Contract state is accepted only when its proposal key and validator-agreed content hash match the indexed revision. The runtime database role is SQL-managed and intentionally lacks `DELETE`, schema ownership, DDL, and Neon's broad `neon_superuser` membership.
+
+### Public API
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Database reachability plus indexer counts and last successful poll |
+| `GET /v1/sources` | Configured sources, polling health, and bounded error state |
+| `GET /v1/proposals?status=active&space=balancer.eth` | Cursor-paginated proposal feed with latest assessment state |
+| `GET /v1/proposals/<canonical-id>` | Proposal body, revision, transaction, and accepted assessment details |
+| `GET /v1/assessments/<proposal-key>` | Accepted assessment and GenLayer provenance |
+
+List responses accept `limit` (maximum 100) and an opaque numeric `cursor` returned as `page.nextCursor`. Reads require no wallet or API key. The internal cycle endpoint is bearer-protected and exists for operations only; normal ingestion is driven by the cron trigger.
 
 ## Consensus lifecycle
 
@@ -210,6 +224,9 @@ Existing state is checked first. An assessed proposal returns without another tr
 | `QUORUMX_CONTRACT_ADDRESS` | Non-Studionet | Verified contract | Target oracle |
 | `QUORUMX_GENLAYER_PRIVATE_KEY` | Writes only | None | 32-byte signing key |
 | `QUORUMX_SNAPSHOT_SPACES` | No | `balancer.eth` | Ordered comma-separated spaces |
+| `QUORUMX_SNAPSHOT_LIMIT` | Worker only | `20` | Recent proposals fetched per configured space, maximum 50 |
+| `QUORUMX_ENABLE_WRITES` | Worker only | `true` | Explicit automatic GenLayer submission switch |
+| `QUORUMX_ADMIN_TOKEN` | Worker only | None | Secret bearer token for the internal manual-cycle endpoint |
 | `QUORUMX_ALLOW_FIXTURES` | No | `false` | Explicit fixture enablement |
 | `QUORUMX_PROBE_PROPOSAL_KEY` | Smoke only | None | Record that must be readable |
 | `DATABASE_URL_UNPOOLED` | Migrations only | None | Direct Neon owner connection; never a pooler URL |
@@ -258,7 +275,7 @@ Consensus does not make a conclusion objectively correct. It makes retrieval and
 
 ## Verification status
 
-Protected `main` requires 94 Jest tests, TypeScript type-check and builds, 6 Python contract tests, 3 GenVM static checks, npm audit, and full-history Gitleaks scanning. The separate daily/on-demand **Studionet smoke** has no key and performs no write; it must discover live proposals and read the canonical stored assessment.
+Protected `main` requires the full Jest suite, TypeScript type-check and builds, Python contract tests, GenVM static checks, npm audit, and full-history Gitleaks scanning. The separate daily/on-demand **Studionet smoke** has no key and performs no write; it must discover live proposals and read the canonical stored assessment. Worker-specific tests cover Snapshot normalization, bounded GraphQL handling, and byte-identical contract hashing.
 
 `genvm-lint lint` passes. SDK-backed `genvm-lint check` currently returns `E101` because `genvm-linter 0.11.0` requests an absent `genvm-universal.tar.xz` release asset. CI tolerates only that exact error. See [genlayerlabs/genvm-linter#27](https://github.com/genlayerlabs/genvm-linter/issues/27).
 
@@ -285,15 +302,15 @@ index.html             static read-only proof inspector
 
 - Studionet is a development environment, not a production-persistence guarantee.
 - v0.1 discovers/submits Snapshot proposals; general HTTPS is not yet a default CLI path.
-- The database and API foundation are live, but automatic proposal polling and the multi-assessment feed are not implemented yet.
+- Snapshot is the only automatically polled source in v0.2; GEN-native discovery waits for a stable canonical public proposal feed.
 - QuorumX does not block proposals, control treasuries, or cast votes.
 - Conclusions can be incomplete or wrong; consensus improves provenance, not certainty.
 - Persistent production-like testnet deployment remains a future milestone.
 
 ## Roadmap
 
-- add the scheduled Snapshot discovery handler, durable job claiming, and automatic assessment worker;
-- expose indexed proposals and multiple accepted assessments through the public API and interface;
+- design the public proposal and assessment interface on top of the completed v0.2 API;
+- add notifications and operational dashboards for retry/dead-letter states;
 - add a verified public GEN governance source when canonical access exists;
 - expose public HTTPS through a supported operator command;
 - notify maintainers when scheduled smoke runs fail;
