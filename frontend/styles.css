@@ -21,6 +21,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; scroll-padding-top: 88px; }
 body { margin: 0; background: var(--ink); color: var(--paper); font-family: var(--sans); }
 body.dialog-open { overflow: hidden; }
