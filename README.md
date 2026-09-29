@@ -88,6 +88,25 @@ CLI · proof inspector · governance integrations
 | GenLayer validators | Independently observe and validate nondeterministic work | Trusting local operator evidence |
 | Proof inspector | Present verified evidence and inspect Snapshot identities | Signing transactions or holding keys |
 
+### v0.2 indexing foundation
+
+The first v0.2 infrastructure slice is live. A Cloudflare Worker at [api.quorumx.dev](https://api.quorumx.dev) reaches an isolated Neon Postgres project through Cloudflare Hyperdrive. The database stores discovery and delivery state; it does not replace GenLayer as the authority for assessments.
+
+```text
+Snapshot / GEN sources
+        │ scheduled discovery (next v0.2 slice)
+        ▼
+Cloudflare Worker · api.quorumx.dev
+        │ HYPERDRIVE binding
+        ▼
+Neon Postgres · proposals · revisions · jobs · transactions · assessments
+        │ assessment submission and finality tracking
+        ▼
+GovernanceRiskOracle on GenLayer
+```
+
+`GET /health` exercises the deployed Worker, Hyperdrive, and Neon database together. The runtime database role is SQL-managed and intentionally lacks `DELETE`, schema ownership, DDL, and Neon's broad `neon_superuser` membership.
+
 ## Consensus lifecycle
 
 1. **Discover:** find an eligible proposal in configured Snapshot spaces.
@@ -193,6 +212,8 @@ Existing state is checked first. An assessed proposal returns without another tr
 | `QUORUMX_SNAPSHOT_SPACES` | No | `balancer.eth` | Ordered comma-separated spaces |
 | `QUORUMX_ALLOW_FIXTURES` | No | `false` | Explicit fixture enablement |
 | `QUORUMX_PROBE_PROPOSAL_KEY` | Smoke only | None | Record that must be readable |
+| `DATABASE_URL_UNPOOLED` | Migrations only | None | Direct Neon owner connection; never a pooler URL |
+| `QUORUMX_DATABASE_ROLE_PASSWORD` | Role provisioning only | None | High-entropy password passed to the one-time role script |
 
 RPC and contract must belong to the same network. Studionet and Studio development preview have different chain IDs and state; QuorumX does not relabel one as the other.
 
@@ -252,6 +273,9 @@ app/src/cli/          operator commands and presentation
 app/tests/            unit, integration, security, regression tests
 contracts/            authoritative contract and rule tests
 scripts/              read-only validation harness
+database/migrations/  versioned v0.2 indexer schema
+workers/api/           Cloudflare API and polling foundation
+wrangler.jsonc         custom domain, Hyperdrive, placement, observability
 dwcs/                  optional legacy scoring research; not authoritative
 index.html             static read-only proof inspector
 .github/workflows/     CI, smoke, and Pages deployment
@@ -261,14 +285,15 @@ index.html             static read-only proof inspector
 
 - Studionet is a development environment, not a production-persistence guarantee.
 - v0.1 discovers/submits Snapshot proposals; general HTTPS is not yet a default CLI path.
-- The proof inspector presents one verified assessment; it is not a multi-assessment indexer.
+- The database and API foundation are live, but automatic proposal polling and the multi-assessment feed are not implemented yet.
 - QuorumX does not block proposals, control treasuries, or cast votes.
 - Conclusions can be incomplete or wrong; consensus improves provenance, not certainty.
 - Persistent production-like testnet deployment remains a future milestone.
 
 ## Roadmap
 
-- index multiple accepted assessments in the public interface;
+- add the scheduled Snapshot discovery handler, durable job claiming, and automatic assessment worker;
+- expose indexed proposals and multiple accepted assessments through the public API and interface;
 - add a verified public GEN governance source when canonical access exists;
 - expose public HTTPS through a supported operator command;
 - notify maintainers when scheduled smoke runs fail;

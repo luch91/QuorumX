@@ -4,6 +4,7 @@ dist-validation/
 .env
 .env.*
 !.env.example
+.neon
 *.log
 __pycache__/
 *.py[cod]
@@ -22,6 +23,8 @@ data/
 .local/
 .superpowers/
 .pytest_cache/
+.wrangler/
+workers/api/worker-configuration.d.ts
 
 # Rust build artifacts, never commit compiled WASM binaries either, they
 # should be built fresh and hashed at registration time.
@@ -42,3 +45,4 @@ dwcs/canaries/dataset.jsonl
 !.github/**/*.md
 !SECURITY.md
 !CONTRIBUTING.md
+.neon
