@@ -208,10 +208,24 @@
   }
 
   function logoPoint(kind, t, random) {
-    if (kind === 0) { const row = Math.floor(random * 3), angle = t * Math.PI * 2; return { x: Math.cos(angle) * (26 - row * 4), y: (row - 1) * 18 + Math.sin(angle) * (8 - row) }; }
-    if (kind === 1) { const block = Math.floor(random * 4), angle = t * Math.PI * 2; const centers = [[-17,-17],[17,-17],[-17,17],[17,17]]; return { x: centers[block][0] + Math.cos(angle) * 9, y: centers[block][1] + Math.sin(angle) * 9 }; }
-    if (kind === 2) { const side = Math.floor(random * 6), local = t; const points = [[0,-32],[28,-16],[28,16],[0,32],[-28,16],[-28,-16],[0,-32]]; return { x: points[side][0] + (points[side+1][0]-points[side][0])*local, y: points[side][1] + (points[side+1][1]-points[side][1])*local }; }
-    const angle = t * Math.PI * 2; return { x: Math.sin(angle) * 27, y: -Math.cos(angle) * 34 + Math.sin(angle * 2) * 7 };
+    const angle = t * Math.PI * 2;
+    if (kind === 0) {
+      const row = Math.floor(random * 3), radiusX = 28 - row * 4;
+      return { x: Math.cos(angle) * radiusX, y: (row - 1) * 18 + Math.sin(angle) * 6 };
+    }
+    if (kind === 1) {
+      const block = Math.floor(random * 4), radius = Math.sqrt(Math.random()) * 10;
+      const centers = [[-15,-15],[15,-15],[-15,15],[15,15]];
+      return { x: centers[block][0] + Math.cos(angle) * radius, y: centers[block][1] + Math.sin(angle) * radius };
+    }
+    if (kind === 2) {
+      const side = Math.floor(random * 6);
+      const points = [[0,-32],[28,-16],[28,16],[0,32],[-28,16],[-28,-16],[0,-32]];
+      const from = points[side], to = points[side + 1];
+      return { x: from[0] + (to[0] - from[0]) * t, y: from[1] + (to[1] - from[1]) * t };
+    }
+    const x = Math.random() * 2 - 1;
+    return { x: x * 31, y: (Math.random() * 2 - 1) * (1 - Math.abs(x)) * 38 };
   }
 
   function setupParticles() {
@@ -220,18 +234,20 @@
     let particles = [], frame = 0, width = 0, height = 0;
     function resize() {
       const rect = canvas.getBoundingClientRect(), ratio = Math.min(devicePixelRatio || 1, 2);
-      width = rect.width; height = rect.height; canvas.width = width * ratio; canvas.height = height * ratio; context.setTransform(ratio,0,0,ratio,0,0);
-      particles = Array.from({ length: reduced ? 420 : 760 }, (_, index) => {
+      const nextWidth = Math.round(rect.width), nextHeight = Math.round(rect.height);
+      if (nextWidth === width && nextHeight === height && particles.length) return;
+      width = nextWidth; height = nextHeight; canvas.width = width * ratio; canvas.height = height * ratio; context.setTransform(ratio,0,0,ratio,0,0);
+      particles = Array.from({ length: reduced ? 560 : 1200 }, (_, index) => {
         const kind = index % 4, random = Math.random(), point = logoPoint(kind, Math.random(), random);
-        return { kind, tx: width * ((kind + .5) / 4) + point.x, ty: height * .47 + point.y, x: Math.random()*width, y: Math.random()*height, speed: .012+Math.random()*.02, phase: Math.random()*Math.PI*2, size: .45+Math.random()*1.25 };
+        return { kind, tx: width * ((kind + .5) / 4) + point.x * 1.35, ty: height * .47 + point.y * 1.35, x: Math.random()*width, y: Math.random()*height, speed: .065+Math.random()*.035, phase: Math.random()*Math.PI*2, size: .8+Math.random()*1.2 };
       });
     }
     function draw(time = 0) {
-      context.clearRect(0,0,width,height); context.fillStyle = "#d9ad4f";
+      context.clearRect(0,0,width,height); context.fillStyle = "#f0c766";
       for (const particle of particles) {
         particle.x += (particle.tx - particle.x) * particle.speed; particle.y += (particle.ty - particle.y) * particle.speed;
         const drift = reduced ? 0 : Math.sin(time*.0005 + particle.phase)*2.2;
-        context.globalAlpha = .35 + .6*Math.abs(Math.sin(time*.00035 + particle.phase)); context.beginPath(); context.arc(particle.x+drift,particle.y,particle.size,0,Math.PI*2); context.fill();
+        context.globalAlpha = .58 + .4*Math.abs(Math.sin(time*.00035 + particle.phase)); context.beginPath(); context.arc(particle.x+drift,particle.y,particle.size,0,Math.PI*2); context.fill();
       }
       context.globalAlpha = 1; if (!reduced) frame = requestAnimationFrame(draw);
     }
