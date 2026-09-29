@@ -56,6 +56,8 @@ QuorumX has been deployed and exercised against a real Snapshot proposal on GenL
 
 The v0.2 indexer also discovered and submitted [BIP-928](https://snapshot.box/#/s:balancer.eth/proposal/0xeae4f8bab6f2fbfe22cfeae51ec336ef238c82e6e0017ee511ee67995235d53d) automatically. Its [accepted transaction](https://explorer-studio.genlayer.com/tx/0x6c5cfc8dee384896e4129ac5682d1168627416ec9d2596b4aee0a5d056f1cd85) is indexed at `api.quorumx.dev` with a `high` risk, `80/100`, `manual_review` result and `submitted_transaction` provenance.
 
+The v0.3 multi-DAO path independently indexed SafeDAO's live [SEP 56](https://snapshot.box/#/s:safe.eth/proposal/0x9d226d025170ec4c56adc53dd77dda851da75c712757122c70dea965003278c4), preserved its proposer wallet, and finalized [transaction `0x806172…34000`](https://explorer-studio.genlayer.com/tx/0x806172bdc02629a2bc07ceb04d87d10fafde2d08a3e485f006babbba4de34000). The accepted result is `high` risk, `82/100`, `manual_review`, with `submitted_transaction` provenance.
+
 Canonical key:
 
 ```text
@@ -90,9 +92,9 @@ CLI · proof inspector · governance integrations
 | GenLayer validators | Independently observe and validate nondeterministic work | Trusting local operator evidence |
 | Proof inspector | Present verified evidence and inspect Snapshot identities | Signing transactions or holding keys |
 
-### v0.2 automatic governance indexer
+### v0.3 multi-DAO governance indexer
 
-The v0.2 backend is live. A Cloudflare Worker at [api.quorumx.dev](https://api.quorumx.dev) polls Snapshot every five minutes, fingerprints proposal revisions, durably claims eligible assessment jobs, submits them to GenLayer, recovers finality, and exposes the indexed result through a public API. It reaches an isolated Neon Postgres project through Cloudflare Hyperdrive. The database stores discovery and delivery state; it does not replace GenLayer as the authority for assessments.
+The backend at [api.quorumx.dev](https://api.quorumx.dev) polls Balancer, SafeDAO, Arbitrum DAO, and ENS DAO on Snapshot every five minutes. It fingerprints proposal revisions, preserves proposer wallets and canonical Snapshot URLs, durably claims eligible assessment jobs, submits them to GenLayer, recovers finality, and exposes the indexed result through a public API. Each source has an explicit assessment switch and rolling 24-hour budget, so broad indexing does not imply unbounded GenLayer spending. Neon stores discovery and delivery state; it does not replace GenLayer as the authority for assessments.
 
 ```text
 Snapshot governance spaces
@@ -114,12 +116,12 @@ GovernanceRiskOracle on GenLayer
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Database reachability plus indexer counts and last successful poll |
-| `GET /v1/sources` | Configured sources, polling health, and bounded error state |
-| `GET /v1/proposals?status=active&space=balancer.eth` | Cursor-paginated proposal feed with latest assessment state |
+| `GET /v1/sources` | DAO metadata, ecosystems, assessment budgets, polling health, and bounded error state |
+| `GET /v1/proposals?status=active&ecosystem=ethereum` | Cursor-paginated proposal feed with latest assessment state |
 | `GET /v1/proposals/<canonical-id>` | Proposal body, revision, transaction, and accepted assessment details |
 | `GET /v1/assessments/<proposal-key>` | Accepted assessment and GenLayer provenance |
 
-List responses accept `limit` (maximum 100) and an opaque numeric `cursor` returned as `page.nextCursor`. Reads require no wallet or API key. The internal cycle endpoint is bearer-protected and exists for operations only; normal ingestion is driven by the cron trigger.
+Proposal lists accept `status`, `space`, exact `source`, human-facing `dao`, proposer `author`, `assessment`, and `ecosystem` filters. Use `assessment=unassessed` for indexed proposals without a job. Lists also accept `limit` (maximum 100) and the numeric `cursor` returned as `page.nextCursor`. Reads require no wallet or API key. The internal cycle endpoint is bearer-protected; normal ingestion is cron-driven.
 
 ## Consensus lifecycle
 
@@ -164,7 +166,7 @@ These are advisory signals. Integrators decide whether `manual_review` opens a t
 | Public HTTPS | Yes | Adapter and contract; not default v0.1 CLI discovery | `public_url:<sha256(url)>` |
 | Archived fixture | Yes | Development only; explicit enablement | `fixture:<fixture-id>` |
 
-Snapshot spaces are configured with `QUORUMX_SNAPSHOT_SPACES`. This is the path for a public GEN governance space once its canonical source is verified. QuorumX never silently substitutes a fixture when a live space has no proposal.
+The automatic indexer uses an allowlisted registry for `balancer.eth`, `safe.eth`, `arbitrumfoundation.eth`, and `ens.eth`; environment configuration can select only registered spaces. This is also the path for a public GEN governance space once its canonical source is verified. QuorumX never silently substitutes a fixture when a live space has no proposal.
 
 Public URL ingestion rejects credentials, non-HTTPS schemes, localhost, loopback, link-local, private/reserved addresses, and hostnames resolving privately. Redirects are not followed. Responses are restricted to text/JSON and bounded. Fixtures are never implicit and permanently retain `fixture` provenance.
 
@@ -290,7 +292,7 @@ app/src/cli/          operator commands and presentation
 app/tests/            unit, integration, security, regression tests
 contracts/            authoritative contract and rule tests
 scripts/              read-only validation harness
-database/migrations/  versioned v0.2 indexer schema
+database/migrations/  versioned indexer schema and source registry
 workers/api/           Cloudflare API and polling foundation
 wrangler.jsonc         custom domain, Hyperdrive, placement, observability
 dwcs/                  optional legacy scoring research; not authoritative
@@ -302,14 +304,14 @@ index.html             static read-only proof inspector
 
 - Studionet is a development environment, not a production-persistence guarantee.
 - v0.1 discovers/submits Snapshot proposals; general HTTPS is not yet a default CLI path.
-- Snapshot is the only automatically polled source in v0.2; GEN-native discovery waits for a stable canonical public proposal feed.
+- Automatic discovery currently covers four Snapshot DAOs; GEN-native discovery waits for a stable canonical public proposal feed.
 - QuorumX does not block proposals, control treasuries, or cast votes.
 - Conclusions can be incomplete or wrong; consensus improves provenance, not certainty.
 - Persistent production-like testnet deployment remains a future milestone.
 
 ## Roadmap
 
-- design the public proposal and assessment interface on top of the completed v0.2 API;
+- design the public proposal and assessment interface on top of the multi-DAO API;
 - add notifications and operational dashboards for retry/dead-letter states;
 - add a verified public GEN governance source when canonical access exists;
 - expose public HTTPS through a supported operator command;

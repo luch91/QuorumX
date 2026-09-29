@@ -4,6 +4,8 @@ export interface SnapshotProposal {
   externalId: string;
   canonicalId: string;
   source: { kind: "snapshot"; space: string; proposalId: string };
+  authorAddress: `0x${string}`;
+  canonicalUrl: string;
   title: string;
   bodyText: string;
   choices: string[];
@@ -12,6 +14,7 @@ export interface SnapshotProposal {
   submittedAt?: string;
   votingStartsAt?: string;
   votingEndsAt?: string;
+  assessmentEligible: boolean;
 }
 
 export interface StoredAssessment {

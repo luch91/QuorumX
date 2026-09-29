@@ -12,6 +12,7 @@ import {
 import type { CycleResult } from "./domain";
 import { getTransactionState, readAssessment, submitAssessment, type GenLayerSettings } from "./genlayer";
 import { fetchRecentSnapshotProposals } from "./snapshot";
+import { snapshotSourceForSpace } from "./sources";
 
 export interface CycleSettings {
   databaseUrl: string;
@@ -68,9 +69,10 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
     }
 
     for (const space of settings.snapshotSpaces) {
+      const source = snapshotSourceForSpace(space);
       try {
         const proposals = await fetchRecentSnapshotProposals(space, settings.fetcher ?? fetch, settings.snapshotLimit);
-        const ingested = await ingestSnapshotProposals(client, space, proposals);
+        const ingested = await ingestSnapshotProposals(client, source, proposals);
         result.sourcesPolled += 1;
         result.proposalsSeen += ingested.proposalsSeen;
         result.revisionsCreated += ingested.revisionsCreated;
@@ -78,7 +80,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
       } catch (error) {
         const message = errorMessage(error);
         result.errors.push(`snapshot:${space}: ${message}`);
-        await recordSourceFailure(client, space, message).catch((recordError) => {
+        await recordSourceFailure(client, source, message).catch((recordError) => {
           result.errors.push(`snapshot:${space}: could not record failure: ${errorMessage(recordError)}`);
         });
       }

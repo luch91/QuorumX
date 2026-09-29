@@ -1,6 +1,7 @@
 import { Client } from "pg";
 import { canonicalJson, contractCanonicalJson, sha256 } from "./canonical";
 import type { SnapshotProposal, StoredAssessment } from "./domain";
+import type { SnapshotSourceDefinition } from "./sources";
 
 export interface IngestResult {
   proposalsSeen: number;
@@ -39,16 +40,27 @@ export async function withDatabase<T>(connectionString: string, task: (client: C
   }
 }
 
-async function ensureSnapshotSource(client: Client, space: string): Promise<string> {
-  const sourceKey = `snapshot:${space}`;
+async function ensureSnapshotSource(client: Client, source: SnapshotSourceDefinition): Promise<string> {
+  const sourceKey = `snapshot:${source.space}`;
   const result = await client.query<{ id: string }>(`
-    insert into quorumx.sources (source_key, kind, display_name, configuration, enabled, poll_interval_seconds)
-    values ($1, 'snapshot', $2, jsonb_build_object('space', $3::text), true, 300)
+    insert into quorumx.sources (
+      source_key, kind, display_name, configuration, enabled, poll_interval_seconds,
+      homepage_url, logo_url, ecosystems, assessment_enabled, daily_assessment_budget
+    )
+    values ($1, 'snapshot', $2, jsonb_build_object('space', $3::text), true, 300,
+      $4, $5, $6::jsonb, $7, $8)
     on conflict (source_key) do update set
+      display_name = excluded.display_name,
       configuration = excluded.configuration,
+      homepage_url = excluded.homepage_url,
+      logo_url = excluded.logo_url,
+      ecosystems = excluded.ecosystems,
+      assessment_enabled = excluded.assessment_enabled,
+      daily_assessment_budget = excluded.daily_assessment_budget,
       updated_at = now()
     returning id::text
-  `, [sourceKey, `${space} governance`, space]);
+  `, [sourceKey, source.displayName, source.space, source.homepageUrl, source.logoUrl,
+    JSON.stringify(source.ecosystems), source.assessmentEnabled, source.dailyAssessmentBudget]);
   return result.rows[0].id;
 }
 
@@ -57,8 +69,8 @@ function shouldAssess(proposal: SnapshotProposal, now: Date): boolean {
   return proposal.votingEndsAt === undefined || new Date(proposal.votingEndsAt).getTime() > now.getTime();
 }
 
-export async function recordSourceFailure(client: Client, space: string, message: string): Promise<void> {
-  const sourceId = await ensureSnapshotSource(client, space);
+export async function recordSourceFailure(client: Client, source: SnapshotSourceDefinition, message: string): Promise<void> {
+  const sourceId = await ensureSnapshotSource(client, source);
   await client.query(`
     update quorumx.sources
     set last_polled_at = now(), last_error = $2, updated_at = now()
@@ -68,13 +80,24 @@ export async function recordSourceFailure(client: Client, space: string, message
 
 export async function ingestSnapshotProposals(
   client: Client,
-  space: string,
+  source: SnapshotSourceDefinition,
   proposals: SnapshotProposal[],
   now = new Date(),
 ): Promise<IngestResult> {
   await client.query("begin");
   try {
-    const sourceId = await ensureSnapshotSource(client, space);
+    const sourceId = await ensureSnapshotSource(client, source);
+    const recentJobs = await client.query<{ count: number }>(`
+      select count(*)::integer as count
+      from quorumx.assessment_jobs jobs
+      join quorumx.proposal_revisions revisions on revisions.id = jobs.revision_id
+      join quorumx.proposals proposals on proposals.id = revisions.proposal_id
+      where proposals.source_id = $1
+        and jobs.created_at >= $2::timestamptz - interval '24 hours'
+    `, [sourceId, now.toISOString()]);
+    let remainingBudget = source.assessmentEnabled
+      ? Math.max(0, source.dailyAssessmentBudget - recentJobs.rows[0].count)
+      : 0;
     let revisionsCreated = 0;
     let jobsCreated = 0;
     let newestSubmittedAt: string | undefined;
@@ -84,10 +107,11 @@ export async function ingestSnapshotProposals(
         insert into quorumx.proposals (
           source_id, external_id, canonical_id, title, body_text, choices,
           linked_evidence_urls, status, submitted_at, voting_starts_at,
-          voting_ends_at, first_seen_at, last_seen_at, created_at, updated_at
+          voting_ends_at, author_address, canonical_url, assessment_eligible,
+          first_seen_at, last_seen_at, created_at, updated_at
         ) values (
           $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11,
-          $12, $12, $12, $12
+          $12, $13, $14, $15, $15, $15, $15
         )
         on conflict (source_id, external_id) do update set
           canonical_id = excluded.canonical_id,
@@ -99,6 +123,9 @@ export async function ingestSnapshotProposals(
           submitted_at = excluded.submitted_at,
           voting_starts_at = excluded.voting_starts_at,
           voting_ends_at = excluded.voting_ends_at,
+          author_address = excluded.author_address,
+          canonical_url = excluded.canonical_url,
+          assessment_eligible = excluded.assessment_eligible,
           last_seen_at = excluded.last_seen_at,
           updated_at = excluded.updated_at
         returning id::text
@@ -114,12 +141,17 @@ export async function ingestSnapshotProposals(
         proposal.submittedAt ?? null,
         proposal.votingStartsAt ?? null,
         proposal.votingEndsAt ?? null,
+        proposal.authorAddress,
+        proposal.canonicalUrl,
+        shouldAssess(proposal, now),
         now.toISOString(),
       ]);
       const proposalId = proposalResult.rows[0].id;
       const normalizedPayload = {
         canonicalId: proposal.canonicalId,
         source: proposal.source,
+        authorAddress: proposal.authorAddress,
+        canonicalUrl: proposal.canonicalUrl,
         title: proposal.title,
         bodyText: proposal.bodyText,
         choices: proposal.choices,
@@ -147,7 +179,7 @@ export async function ingestSnapshotProposals(
 
       if (revisionResult.rowCount === 1) {
         revisionsCreated += 1;
-        if (shouldAssess(proposal, now)) {
+        if (shouldAssess(proposal, now) && remainingBudget > 0) {
           const jobResult = await client.query(`
             insert into quorumx.assessment_jobs (revision_id, status, available_at, created_at, updated_at)
             values ($1, 'pending', $2, $2, $2)
@@ -155,6 +187,7 @@ export async function ingestSnapshotProposals(
             returning id
           `, [revisionResult.rows[0].id, now.toISOString()]);
           jobsCreated += jobResult.rowCount ?? 0;
+          remainingBudget -= jobResult.rowCount ?? 0;
         }
       }
 
