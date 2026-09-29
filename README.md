@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/luch91/QuorumX/actions/workflows/ci.yml/badge.svg)](https://github.com/luch91/QuorumX/actions/workflows/ci.yml)
 [![Studionet smoke](https://github.com/luch91/QuorumX/actions/workflows/smoke.yml/badge.svg)](https://github.com/luch91/QuorumX/actions/workflows/smoke.yml)
-[![Demo](https://github.com/luch91/QuorumX/actions/workflows/pages.yml/badge.svg)](https://luch91.github.io/QuorumX/)
+[![Living Index](https://img.shields.io/badge/Living_Index-quorumx.dev-C9A24D.svg)](https://quorumx.dev/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Consensus-backed governance intelligence for decisions too important to trust to one model, one API, or one operator.**
@@ -11,7 +11,7 @@ QuorumX is a governance-risk oracle built on GenLayer. It turns a public proposa
 
 QuorumX is advisory infrastructure. It does not vote, execute proposals, or replace governance judgment. It provides a verifiable escalation signal: what was assessed, where it came from, what risks were identified, and whether GenLayer consensus accepted the result.
 
-> **Live now:** [open the Living Index](https://luch91.github.io/QuorumX/) · [inspect the contract](https://explorer-studio.genlayer.com/address/0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237) · [inspect the first assessment](https://explorer-studio.genlayer.com/tx/0x55131db5c1b05ac6be9b46ef86511a95f5a880b957c78270337c3b3628149268)
+> **Live now:** [open the Living Index](https://quorumx.dev/) · [inspect the contract](https://explorer-studio.genlayer.com/address/0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237) · [inspect the first assessment](https://explorer-studio.genlayer.com/tx/0x55131db5c1b05ac6be9b46ef86511a95f5a880b957c78270337c3b3628149268)
 
 ## Why QuorumX exists
 
@@ -134,7 +134,7 @@ The Living Index is QuorumX's evidence-first governance interface. It consumes t
 - **DAO Directory:** transparent indexing and assessment-policy status for each source; and
 - **Methodology:** the retrieval, normalization, consensus, and publication lifecycle in plain language.
 
-All browsing remains public and wallet-free. The optional navbar wallet control only requests an account from an already-installed injected wallet and displays the selected address locally. It does not request a signature, switch networks, submit transactions, or unlock additional reading access. Signed participation is reserved for a later feature with a specific, visible purpose.
+All browsing remains public and wallet-free. Cloudflare serves the interface shell at [quorumx.dev](https://quorumx.dev/), while the browser retrieves the current proposal, source, and assessment state from [api.quorumx.dev](https://api.quorumx.dev). The optional navbar wallet control only requests an account from an already-installed injected wallet and displays the selected address locally. It does not request a signature, switch networks, submit transactions, or unlock additional reading access. Signed participation is reserved for a later feature with a specific, visible purpose.
 
 ## Consensus lifecycle
 
@@ -309,9 +309,10 @@ database/migrations/  versioned indexer schema and source registry
 workers/api/           Cloudflare API and polling foundation
 wrangler.jsonc         custom domain, Hyperdrive, placement, observability
 dwcs/                  optional legacy scoring research; not authoritative
-index.html             Living Index document shell
-frontend/              interface styles, API client, motion, and tests
-.github/workflows/     CI, smoke, and Pages deployment
+frontend/              Living Index document, styles, API client, motion, and tests
+workers/site/          Cloudflare web Worker and canonical-host redirect
+wrangler.site.jsonc    web assets, custom domains, and observability
+.github/workflows/     CI and smoke verification
 ```
 
 ## Current limitations
@@ -325,7 +326,7 @@ frontend/              interface styles, API client, motion, and tests
 
 ## Roadmap
 
-- move the Living Index from GitHub Pages to `quorumx.dev`;
+- automate Cloudflare web deployment after protected-main verification;
 - add purposeful signed participation without gating public reads;
 - add notifications and operational dashboards for retry/dead-letter states;
 - add a verified public GEN governance source when canonical access exists;
