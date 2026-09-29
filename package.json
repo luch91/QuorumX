@@ -14,6 +14,8 @@
     "typecheck:worker": "npm run cf:types && tsc -p workers/api/tsconfig.json",
     "cf:types": "wrangler types workers/api/worker-configuration.d.ts",
     "cf:deploy": "wrangler deploy",
+    "cf:deploy:site": "wrangler deploy --config wrangler.site.jsonc",
+    "cf:dry-run:site": "wrangler deploy --config wrangler.site.jsonc --dry-run",
     "db:provision-role": "node scripts/provision_database_role.cjs",
     "db:migrate": "node scripts/migrate_database.cjs",
     "db:verify": "node scripts/verify_database.cjs",
