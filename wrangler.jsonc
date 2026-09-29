@@ -4,6 +4,20 @@
   "main": "workers/api/src/index.ts",
   "compatibility_date": "2026-09-29",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "QUORUMX_SNAPSHOT_SPACES": "balancer.eth",
+    "QUORUMX_SNAPSHOT_LIMIT": "20",
+    "QUORUMX_ENABLE_WRITES": "true",
+    "QUORUMX_GENLAYER_NETWORK": "studionet",
+    "QUORUMX_GENLAYER_RPC_URL": "https://studio.genlayer.com/api",
+    "QUORUMX_CONTRACT_ADDRESS": "0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237"
+  },
+  "secrets": {
+    "required": ["QUORUMX_ADMIN_TOKEN", "QUORUMX_GENLAYER_PRIVATE_KEY"]
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "routes": [
     {
       "pattern": "api.quorumx.dev",
