@@ -20,6 +20,11 @@ export async function listSources(client: Client): Promise<unknown> {
       display_name as "displayName",
       configuration,
       enabled,
+      homepage_url as "homepageUrl",
+      logo_url as "logoUrl",
+      ecosystems,
+      assessment_enabled as "assessmentEnabled",
+      daily_assessment_budget as "dailyAssessmentBudget",
       poll_interval_seconds as "pollIntervalSeconds",
       last_polled_at as "lastPolledAt",
       last_succeeded_at as "lastSucceededAt",
@@ -35,16 +40,34 @@ export async function listProposals(client: Client, url: URL): Promise<unknown> 
   const beforeId = cursor(url);
   const status = url.searchParams.get("status");
   const space = url.searchParams.get("space")?.trim().toLowerCase();
+  const source = url.searchParams.get("source")?.trim().toLowerCase();
+  const dao = url.searchParams.get("dao")?.trim().toLowerCase();
+  const author = url.searchParams.get("author")?.trim().toLowerCase();
+  const assessment = url.searchParams.get("assessment")?.trim().toLowerCase();
+  const ecosystem = url.searchParams.get("ecosystem")?.trim().toLowerCase();
   if (status && !["pending", "active", "closed", "unknown"].includes(status)) {
     throw new RangeError("invalid_status");
   }
+  if (author && !/^0x[0-9a-f]{40}$/.test(author)) throw new RangeError("invalid_author");
+  if (dao && (dao.length > 100 || !/^[a-z0-9 ._-]+$/.test(dao))) throw new RangeError("invalid_dao");
+  const assessmentStatuses = ["pending", "processing", "submitted", "finalized", "retryable", "failed", "dead_letter"];
+  if (assessment && assessment !== "unassessed" && !assessmentStatuses.includes(assessment)) {
+    throw new RangeError("invalid_assessment");
+  }
+  if (ecosystem && !/^[a-z0-9][a-z0-9-]{0,49}$/.test(ecosystem)) throw new RangeError("invalid_ecosystem");
   const result = await client.query(`
     select
       proposals.id::text,
       proposals.canonical_id as "canonicalId",
       proposals.external_id as "externalId",
       sources.source_key as "sourceKey",
+      sources.display_name as "daoName",
       sources.configuration ->> 'space' as space,
+      sources.logo_url as "daoLogoUrl",
+      sources.ecosystems,
+      proposals.author_address as "authorAddress",
+      proposals.canonical_url as "canonicalUrl",
+      proposals.assessment_eligible as "assessmentEligible",
       proposals.title,
       proposals.choices,
       proposals.status,
@@ -72,9 +95,15 @@ export async function listProposals(client: Client, url: URL): Promise<unknown> 
     where ($1::bigint is null or proposals.id < $1)
       and ($2::text is null or proposals.status = $2)
       and ($3::text is null or sources.configuration ->> 'space' = $3)
+      and ($4::text is null or sources.source_key = $4)
+      and ($5::text is null or lower(sources.display_name) = $5 or sources.configuration ->> 'space' = $5)
+      and ($6::text is null or proposals.author_address = $6)
+      and ($7::text is null or ($7 = 'unassessed' and jobs.id is null) or jobs.status = $7)
+      and ($8::text is null or sources.ecosystems ? $8)
     order by proposals.id desc
-    limit $4
-  `, [beforeId ?? null, status ?? null, space ?? null, limit + 1]);
+    limit $9
+  `, [beforeId ?? null, status ?? null, space ?? null, source ?? null, dao ?? null,
+    author ?? null, assessment ?? null, ecosystem ?? null, limit + 1]);
   const hasMore = result.rows.length > limit;
   const rows = result.rows.slice(0, limit);
   return {
@@ -93,7 +122,14 @@ export async function getProposal(client: Client, canonicalId: string): Promise<
       proposals.canonical_id as "canonicalId",
       proposals.external_id as "externalId",
       sources.source_key as "sourceKey",
+      sources.display_name as "daoName",
       sources.configuration ->> 'space' as space,
+      sources.homepage_url as "daoHomepageUrl",
+      sources.logo_url as "daoLogoUrl",
+      sources.ecosystems,
+      proposals.author_address as "authorAddress",
+      proposals.canonical_url as "canonicalUrl",
+      proposals.assessment_eligible as "assessmentEligible",
       proposals.title,
       proposals.body_text as "bodyText",
       proposals.choices,

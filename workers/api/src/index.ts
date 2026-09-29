@@ -2,6 +2,7 @@ import type { Client } from "pg";
 import { getAssessment, getProposal, listProposals, listSources } from "./api";
 import { runIndexerCycle } from "./cycle";
 import { withDatabase } from "./database";
+import { snapshotSourceForSpace } from "./sources";
 
 const CONTRACT_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const PRIVATE_KEY = /^0x[0-9a-fA-F]{64}$/;
@@ -37,6 +38,7 @@ function cycleSettings(env: Env) {
     env.QUORUMX_SNAPSHOT_SPACES.split(",").map((space) => space.trim().toLowerCase()).filter(Boolean),
   )];
   if (snapshotSpaces.length === 0) throw new Error("At least one Snapshot space is required");
+  snapshotSpaces.forEach(snapshotSourceForSpace);
   return {
     databaseUrl: env.HYPERDRIVE.connectionString,
     snapshotSpaces,
@@ -109,7 +111,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     });
   }
   if (url.pathname === "/" && request.method === "GET") {
-    return json({ service: "quorumx-api", version: "0.2.0", status: "online" });
+    return json({ service: "quorumx-api", version: "0.3.0", status: "online" });
   }
   if (url.pathname === "/health" && request.method === "GET") return health(env);
   if (url.pathname === "/internal/run" && request.method === "POST") {

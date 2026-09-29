@@ -12,6 +12,7 @@ interface SnapshotRecord {
   start?: number;
   end?: number;
   state?: string;
+  author: string;
   space: { id: string };
 }
 
@@ -32,23 +33,30 @@ function evidenceUrls(body: string): string[] {
   return [...new Set(body.match(/https?:\/\/[^\s)<>'"`]+/g) ?? [])].slice(0, 100);
 }
 
-export function normalizeSnapshotProposal(record: SnapshotRecord): SnapshotProposal {
-  if (!record.id || !record.space?.id || typeof record.title !== "string" || typeof record.body !== "string") {
+export function normalizeSnapshotProposal(record: SnapshotRecord, now = new Date()): SnapshotProposal {
+  if (!record.id || !record.space?.id || typeof record.title !== "string" || typeof record.body !== "string"
+    || !/^0x[0-9a-fA-F]{40}$/.test(record.author)) {
     throw new Error("Snapshot returned a malformed proposal");
   }
   const space = record.space.id.trim().toLowerCase();
+  const proposalStatus = status(record.state);
+  const votingEndsAt = iso(record.end);
   return {
     externalId: record.id,
     canonicalId: `snapshot:${space}:${record.id}`,
     source: { kind: "snapshot", space, proposalId: record.id },
+    authorAddress: record.author.toLowerCase() as `0x${string}`,
+    canonicalUrl: `https://snapshot.box/#/s:${encodeURIComponent(space)}/proposal/${encodeURIComponent(record.id)}`,
     title: record.title,
     bodyText: record.body,
     choices: Array.isArray(record.choices) ? record.choices.filter((choice): choice is string => typeof choice === "string") : [],
     linkedEvidenceUrls: evidenceUrls(record.body),
-    status: status(record.state),
+    status: proposalStatus,
     ...(iso(record.created) ? { submittedAt: iso(record.created) } : {}),
     ...(iso(record.start) ? { votingStartsAt: iso(record.start) } : {}),
-    ...(iso(record.end) ? { votingEndsAt: iso(record.end) } : {}),
+    ...(votingEndsAt ? { votingEndsAt } : {}),
+    assessmentEligible: (proposalStatus === "active" || proposalStatus === "pending")
+      && (votingEndsAt === undefined || new Date(votingEndsAt).getTime() > now.getTime()),
   };
 }
 
@@ -60,7 +68,7 @@ export async function fetchRecentSnapshotProposals(
   const boundedLimit = Math.max(1, Math.min(limit, 50));
   const query = `query Recent($spaces: [String!]!, $limit: Int!) {
     proposals(first: $limit, where: { space_in: $spaces }, orderBy: "created", orderDirection: desc) {
-      id title body choices created start end state space { id }
+      id title body choices created start end state author space { id }
     }
   }`;
   const url = new URL(SNAPSHOT_ENDPOINT);
@@ -79,5 +87,6 @@ export async function fetchRecentSnapshotProposals(
   if (payload.errors?.length) {
     throw new Error(`Snapshot query failed: ${payload.errors.map((error) => error.message ?? "unknown error").join("; ")}`);
   }
-  return (payload.data?.proposals ?? []).map(normalizeSnapshotProposal);
+  const fetchedAt = new Date();
+  return (payload.data?.proposals ?? []).map((proposal) => normalizeSnapshotProposal(proposal, fetchedAt));
 }
