@@ -7,9 +7,55 @@
 
 **Consensus-backed governance intelligence for decisions too important to trust to one model, one API, or one operator.**
 
-QuorumX is a governance-risk oracle built on GenLayer. It turns a public proposal into a bounded, reviewable risk assessment by having validators independently retrieve the source, agree on normalized proposal material, and validate an assessment grounded in that material. The accepted result is stored in an Intelligent Contract for governance interfaces, treasury tooling, delegates, and human reviewers.
+QuorumX is a consensus-backed governance due-diligence system built on GenLayer.
+It turns a public proposal into bounded, inspectable claims, findings, execution
+steps, safeguards, and unresolved questions. Validators independently retrieve
+the source and require an exact canonical match over source-grounded material
+facts before the deterministic report is accepted. The result is stored for
+governance interfaces, treasury tooling, delegates, and human reviewers.
 
-QuorumX is advisory infrastructure. It does not vote, execute proposals, or replace governance judgment. It provides a verifiable escalation signal: what was assessed, where it came from, what risks were identified, and whether GenLayer consensus accepted the result.
+QuorumX is advisory infrastructure. It does not vote, execute proposals, or
+replace governance judgment. It shows what was assessed, where it came from,
+what consequences and evidence gaps were identified, and what GenLayer
+validators accepted.
+
+## Due diligence v2
+
+The original `GovernanceRiskOracle` and its accepted Studionet assessments are
+version 1 records. Their 0–100 scores are historical model outputs, not
+probabilities, confidence levels, or defined weighted totals. They remain
+inspectable and are labelled **Legacy risk assessment** in the Living Index.
+
+Version 2 introduces a separate `GovernanceDueDiligence` contract. It represents
+proposal actions, material claims, evidence references, findings, execution
+steps, unresolved questions, and a finding-derived review priority. It does not
+recommend a vote. Validators still retrieve the Snapshot proposal independently
+and agree on normalized source material. The leader extracts bounded material
+facts from exact source passages; validators independently retrieve the source,
+re-normalize those facts, and require an exact canonical match before the
+deterministic report is accepted. The record can be inspected alongside its
+proposal content hash and transaction.
+
+The first v2 evidence scope is the validator-retrieved proposal. A proposal's
+own assertion of an external metric does **not** establish independent
+verification; those claims remain unverified until controlled external evidence
+adapters and validator checks exist. Review priority means the proposal merits
+human attention, never that QuorumX has decided a governance vote.
+
+The v2 contract passed deterministic tests, GenVM static lint, and live
+Studionet write/read checks. Version 1 remains readable as immutable legacy
+provenance; no legacy score is silently reinterpreted as a v2 finding.
+
+| Layer | v2 path |
+| --- | --- |
+| Contract | `contracts/governance_due_diligence.py` |
+| Database | `database/migrations/0006_due_diligence_v2.sql` adds revision-bound v2 records |
+| API | Existing v1 routes retain their fields; `GET /v2/proposals/<canonical-id>/due-diligence` exposes v2 |
+| Living Index | Findings and evidence take precedence when a v2 record exists; v1 is labelled legacy |
+
+The verified v2 Studionet contract is
+`0x55d4b311f5b8ec5948cf0F34Feb05fce79b71760`. No legacy result is converted
+into a v2 finding.
 
 > **Live now:** [open the Living Index](https://quorumx.dev/) · [inspect the contract](https://explorer-studio.genlayer.com/address/0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237) · [inspect the first assessment](https://explorer-studio.genlayer.com/tx/0x55131db5c1b05ac6be9b46ef86511a95f5a880b957c78270337c3b3628149268)
 

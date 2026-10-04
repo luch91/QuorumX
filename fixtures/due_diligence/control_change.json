@@ -1,0 +1,6 @@
+{
+  "id": "fixture-control-change",
+  "title": "Update treasury execution permissions",
+  "body": "This proposal changes the treasury Safe approval threshold from 4/7 to 3/5. It grants upgrade authority to 0x2222222222222222222222222222222222222222 and transfers the pause role to 0x3333333333333333333333333333333333333333. Execution depends on two separate onchain transactions. Reversing the authority transfer requires a later governance action.",
+  "expected": { "findingTypes": ["governance_change", "permission_change"], "executionSteps": 2 }
+}

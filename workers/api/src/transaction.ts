@@ -6,6 +6,7 @@ export type TransactionState =
 export function classifyTransaction(transaction: {
   status?: unknown;
   statusName?: unknown;
+  result_name?: unknown;
   consensus_data?: { leader_receipt?: Array<{ execution_result?: unknown }> };
 }): TransactionState {
   const status = String(transaction.statusName ?? transaction.status ?? "").toUpperCase();
@@ -16,6 +17,13 @@ export function classifyTransaction(transaction: {
   if (["UNDETERMINED", "VALIDATORS_TIMEOUT", "LEADER_TIMEOUT"].includes(status)) {
     return { state: "undetermined", error: status };
   }
-  if (["ACCEPTED", "FINALIZED"].includes(status)) return { state: "accepted" };
+  if (status === "FINALIZED") {
+    if (execution !== "SUCCESS") {
+      return { state: "undetermined", error: "FINALIZED_WITHOUT_SUCCESS_RECEIPT" };
+    }
+    return String(transaction.result_name ?? "").toUpperCase() === "MAJORITY_AGREE"
+      ? { state: "accepted" }
+      : { state: "undetermined", error: "FINALIZED_WITHOUT_AGREEMENT" };
+  }
   return { state: "pending" };
 }

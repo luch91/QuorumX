@@ -10,7 +10,9 @@
     "QUORUMX_ENABLE_WRITES": "true",
     "QUORUMX_GENLAYER_NETWORK": "studionet",
     "QUORUMX_GENLAYER_RPC_URL": "https://studio.genlayer.com/api",
-    "QUORUMX_CONTRACT_ADDRESS": "0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237"
+    "QUORUMX_CONTRACT_ADDRESS": "0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237",
+    "QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS": "0x55d4b311f5b8ec5948cf0F34Feb05fce79b71760",
+    "QUORUMX_ASSESSMENT_VERSION": "2"
   },
   "secrets": {
     "required": ["QUORUMX_ADMIN_TOKEN", "QUORUMX_GENLAYER_PRIVATE_KEY"]
@@ -42,6 +44,48 @@
     "traces": {
       "enabled": true,
       "head_sampling_rate": 0.01
+    }
+  },
+  "env": {
+    "v2dev": {
+      "name": "quorumx-api-v2-dev",
+      "routes": [],
+      "vars": {
+        "QUORUMX_SNAPSHOT_SPACES": "balancer.eth",
+        "QUORUMX_SNAPSHOT_LIMIT": "20",
+        "QUORUMX_ENABLE_WRITES": "false",
+        "QUORUMX_GENLAYER_NETWORK": "studionet",
+        "QUORUMX_GENLAYER_RPC_URL": "https://studio.genlayer.com/api",
+        "QUORUMX_CONTRACT_ADDRESS": "0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237",
+        "QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS": "0x55d4b311f5b8ec5948cf0F34Feb05fce79b71760",
+        "QUORUMX_ASSESSMENT_VERSION": "2"
+      },
+      "hyperdrive": [
+        {
+          "binding": "HYPERDRIVE",
+          "id": "a4042a29c312486296c9a466b73afc23"
+        }
+      ],
+      "secrets": {
+        "required": ["QUORUMX_ADMIN_TOKEN", "QUORUMX_GENLAYER_PRIVATE_KEY"]
+      },
+      "triggers": {
+        "crons": []
+      },
+      "placement": {
+        "mode": "smart"
+      },
+      "observability": {
+        "enabled": true,
+        "logs": {
+          "enabled": true,
+          "head_sampling_rate": 1
+        },
+        "traces": {
+          "enabled": true,
+          "head_sampling_rate": 0.01
+        }
+      }
     }
   }
 }

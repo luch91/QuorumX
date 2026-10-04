@@ -1,0 +1,6 @@
+{
+  "id": "fixture-benign-proposal",
+  "title": "Publish a nonbinding monthly governance report",
+  "body": "The DAO will publish a monthly public report summarizing completed governance votes. No funds move, no contracts execute, and no permissions change. A named editor drafts the report and two delegates review it before publication. The DAO can stop publishing at any time.",
+  "expected": { "materialClaims": 0, "highSeverityFindings": 0, "reviewPriority": "low" }
+}

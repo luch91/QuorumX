@@ -1,4 +1,5 @@
 import type { Client } from "pg";
+import { revisionChanges } from "./revision_changes";
 
 function boundedLimit(url: URL): number {
   const parsed = Number(url.searchParams.get("limit") ?? "20");
@@ -77,10 +78,15 @@ export async function listProposals(client: Client, url: URL): Promise<unknown> 
       revisions.content_hash as "revisionHash",
       revisions.fetched_at as "revisionFetchedAt",
       jobs.status as "assessmentStatus",
+      case when due_diligence.id is not null then '2' when assessments.id is not null then '1' else null end as "assessmentVersion",
+      due_diligence.record ->> 'reviewPriority' as "reviewPriority",
+      case when due_diligence.id is not null then jsonb_array_length(due_diligence.record -> 'findings') else null end as "findingCount",
+      case when due_diligence.id is not null then jsonb_array_length(due_diligence.record -> 'materialClaims') else null end as "claimCount",
+      case when due_diligence.id is not null then jsonb_array_length(due_diligence.record -> 'unresolvedQuestions') else null end as "unresolvedCount",
       assessments.risk_level as "riskLevel",
       assessments.risk_score as "riskScore",
       assessments.recommendation,
-      assessments.assessed_at as "assessedAt"
+      coalesce(due_diligence.assessed_at, assessments.assessed_at) as "assessedAt"
     from quorumx.proposals proposals
     join quorumx.sources sources on sources.id = proposals.source_id
     left join lateral (
@@ -90,8 +96,12 @@ export async function listProposals(client: Client, url: URL): Promise<unknown> 
       order by fetched_at desc, id desc
       limit 1
     ) revisions on true
-    left join quorumx.assessment_jobs jobs on jobs.revision_id = revisions.id
+    left join lateral (
+      select id, status from quorumx.assessment_jobs
+      where revision_id = revisions.id order by assessment_version desc limit 1
+    ) jobs on true
     left join quorumx.assessments assessments on assessments.revision_id = revisions.id
+    left join quorumx.due_diligence_assessments due_diligence on due_diligence.revision_id = revisions.id
     where ($1::bigint is null or proposals.id < $1)
       and ($2::text is null or proposals.status = $2)
       and ($3::text is null or sources.configuration ->> 'space' = $3)
@@ -142,8 +152,12 @@ export async function getProposal(client: Client, canonicalId: string): Promise<
       proposals.last_seen_at as "lastSeenAt",
       revisions.content_hash as "revisionHash",
       revisions.fetched_at as "revisionFetchedAt",
+      revisions.normalized_payload as "currentRevisionPayload",
+      previous_revision.normalized_payload as "previousRevisionPayload",
       jobs.status as "assessmentStatus",
       jobs.last_error as "assessmentError",
+      case when due_diligence.id is not null then '2' when assessments.id is not null then '1' else null end as "assessmentVersion",
+      due_diligence.record as "dueDiligence",
       transactions.transaction_hash as "transactionHash",
       transactions.state as "transactionState",
       assessments.source_locator_hash as "sourceLocatorHash",
@@ -153,32 +167,48 @@ export async function getProposal(client: Client, canonicalId: string): Promise<
       assessments.risk_categories as "riskCategories",
       assessments.recommendation,
       assessments.summary,
-      assessments.consensus_state as "consensusState",
-      assessments.provenance,
-      assessments.assessed_at as "assessedAt",
+      coalesce(due_diligence.consensus_state, assessments.consensus_state) as "consensusState",
+      coalesce(due_diligence.provenance, assessments.provenance) as provenance,
+      coalesce(due_diligence.assessed_at, assessments.assessed_at) as "assessedAt",
       assessments.indexed_from as "indexedFrom"
     from quorumx.proposals proposals
     join quorumx.sources sources on sources.id = proposals.source_id
     left join lateral (
-      select id, content_hash, fetched_at
+      select id, content_hash, fetched_at, normalized_payload
       from quorumx.proposal_revisions
       where proposal_id = proposals.id
       order by fetched_at desc, id desc
       limit 1
     ) revisions on true
-    left join quorumx.assessment_jobs jobs on jobs.revision_id = revisions.id
+    left join lateral (
+      select normalized_payload from quorumx.proposal_revisions
+      where proposal_id = proposals.id and id <> revisions.id
+      order by fetched_at desc, id desc limit 1
+    ) previous_revision on true
+    left join lateral (
+      select id, status, last_error from quorumx.assessment_jobs
+      where revision_id = revisions.id order by assessment_version desc limit 1
+    ) jobs on true
+    left join quorumx.assessments assessments on assessments.revision_id = revisions.id
+    left join quorumx.due_diligence_assessments due_diligence on due_diligence.revision_id = revisions.id
     left join lateral (
       select transaction_hash, state
       from quorumx.transactions
-      where job_id = jobs.id
+      where id = coalesce(due_diligence.transaction_id, assessments.transaction_id)
+        or (due_diligence.id is null and assessments.id is null and job_id = jobs.id)
       order by submitted_at desc
       limit 1
     ) transactions on true
-    left join quorumx.assessments assessments on assessments.revision_id = revisions.id
     where proposals.canonical_id = $1
     limit 1
   `, [canonicalId]);
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) return undefined;
+  const { currentRevisionPayload, previousRevisionPayload, ...publicRow } = row;
+  return { ...publicRow, changesSincePreviousRevision: revisionChanges(
+    previousRevisionPayload as { title?: string; bodyText?: string; choices?: string[] } | undefined,
+    currentRevisionPayload as { title?: string; bodyText?: string; choices?: string[] } | undefined,
+  ) };
 }
 
 export async function getAssessment(client: Client, proposalKey: string): Promise<unknown | undefined> {
@@ -206,4 +236,24 @@ export async function getAssessment(client: Client, proposalKey: string): Promis
     limit 1
   `, [proposalKey]);
   return result.rows[0];
+}
+
+export async function getDueDiligence(client: Client, proposalKey: string): Promise<unknown | undefined> {
+  const result = await client.query(`
+    select
+      due_diligence.record,
+      revisions.content_hash as "revisionHash",
+      transactions.transaction_hash as "transactionHash",
+      transactions.network,
+      transactions.contract_address as "contractAddress"
+    from quorumx.due_diligence_assessments due_diligence
+    join quorumx.proposal_revisions revisions on revisions.id = due_diligence.revision_id
+    join quorumx.transactions transactions on transactions.id = due_diligence.transaction_id
+    where due_diligence.proposal_key = $1
+    order by due_diligence.assessed_at desc, due_diligence.id desc
+    limit 1
+  `, [proposalKey]);
+  const row = result.rows[0];
+  return row ? { ...row.record, revisionHash: row.revisionHash, transactionHash: row.transactionHash,
+    network: row.network, contractAddress: row.contractAddress } : undefined;
 }

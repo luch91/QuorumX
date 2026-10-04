@@ -17,11 +17,14 @@
   const safeHttpUrl = (value) => { try { const url = new URL(value); return url.protocol === "https:" ? url.href : "#"; } catch { return "#"; } };
   const formatDate = (value, options = { month: "short", day: "numeric", year: "numeric" }) => value ? new Intl.DateTimeFormat("en", options).format(new Date(value)) : "—";
   const daysUntil = (value, now = Date.now()) => value ? Math.ceil((new Date(value).getTime() - now) / 86400000) : null;
-  const riskClass = (risk) => ["low", "medium", "high"].includes(risk) ? `badge-${risk}` : "risk-none";
   const assessmentLabel = (status) => status === "finalized" ? "Accepted" : status ? titleCase(status) : "Not assessed";
+  const priorityRank = { urgent: 4, high: 3, normal: 2, low: 1 };
+  const assessmentSignal = (proposal) => proposal.assessmentVersion === "2"
+    ? `${titleCase(proposal.reviewPriority)} review · ${proposal.findingCount ?? proposal.dueDiligence?.findings?.length ?? 0} findings`
+    : proposal.riskLevel ? "Legacy risk assessment" : "Not yet reviewed";
 
-  function buildProposalQuery(filters = {}, cursor) {
-    const params = new URLSearchParams({ limit: "24" });
+  function buildProposalQuery(filters = {}, cursor, limit = 24) {
+    const params = new URLSearchParams({ limit: String(limit) });
     ["status", "assessment", "ecosystem", "author", "source", "dao", "space"].forEach((key) => {
       if (filters[key]) params.set(key, filters[key]);
     });
@@ -37,17 +40,17 @@
 
   function proposalMatchesSearch(proposal, search) {
     if (!search) return true;
-    const haystack = [proposal.title, proposal.daoName, proposal.space, proposal.authorAddress, proposal.canonicalId].join(" ").toLowerCase();
+    const haystack = [proposal.title, proposal.daoName, proposal.space, proposal.authorAddress, proposal.canonicalId, proposal.transactionHash].join(" ").toLowerCase();
     return haystack.includes(search.trim().toLowerCase());
   }
 
   function proposalRow(proposal) {
-    const risk = proposal.riskLevel ? `${titleCase(proposal.riskLevel)} · ${proposal.riskScore}` : "—";
+    const risk = assessmentSignal(proposal);
     return `<tr>
       <td><button class="proposal-title-button" type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">${escapeHtml(proposal.title)}</button></td>
       <td><span class="dao-cell"><img src="${escapeHtml(safeHttpUrl(proposal.daoLogoUrl))}" alt="" loading="lazy">${escapeHtml(proposal.daoName)}</span></td>
       <td><span class="badge ${proposal.status === "active" ? "badge-active" : ""}">${escapeHtml(titleCase(proposal.status))}</span></td>
-      <td><span class="${riskClass(proposal.riskLevel)}">${escapeHtml(risk)}</span></td>
+      <td><span class="${proposal.assessmentVersion === "2" ? "badge-finalized" : "risk-none"}">${escapeHtml(risk)}</span></td>
       <td><span class="badge ${proposal.assessmentStatus === "finalized" ? "badge-finalized" : ""}">${escapeHtml(assessmentLabel(proposal.assessmentStatus))}</span></td>
       <td>${escapeHtml(formatDate(proposal.votingEndsAt, { month: "short", day: "numeric", year: "numeric" }))}</td>
       <td><button class="proposal-title-button row-arrow" type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}" aria-label="Open ${escapeHtml(proposal.title)}">→</button></td>
@@ -55,8 +58,8 @@
   }
 
   function mobileProposal(proposal) {
-    const risk = proposal.riskLevel ? `${titleCase(proposal.riskLevel)} · ${proposal.riskScore}` : "Not assessed";
-    return `<article class="mobile-card"><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}"><span class="dao-cell"><img src="${escapeHtml(safeHttpUrl(proposal.daoLogoUrl))}" alt="">${escapeHtml(proposal.daoName)}</span><h3>${escapeHtml(proposal.title)}</h3><span class="mobile-card-meta"><span class="badge ${proposal.status === "active" ? "badge-active" : ""}">${escapeHtml(titleCase(proposal.status))}</span><span class="badge ${riskClass(proposal.riskLevel)}">${escapeHtml(risk)}</span><span class="badge">Ends ${escapeHtml(formatDate(proposal.votingEndsAt, { month: "short", day: "numeric" }))}</span></span></button></article>`;
+    const risk = assessmentSignal(proposal);
+    return `<article class="mobile-card"><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}"><span class="dao-cell"><img src="${escapeHtml(safeHttpUrl(proposal.daoLogoUrl))}" alt="">${escapeHtml(proposal.daoName)}</span><h3>${escapeHtml(proposal.title)}</h3><span class="mobile-card-meta"><span class="badge ${proposal.status === "active" ? "badge-active" : ""}">${escapeHtml(titleCase(proposal.status))}</span><span class="badge">${escapeHtml(risk)}</span><span class="badge">Ends ${escapeHtml(formatDate(proposal.votingEndsAt, { month: "short", day: "numeric" }))}</span></span></button></article>`;
   }
 
   function renderProposals() {
@@ -67,11 +70,11 @@
     $("[data-load-more]").hidden = !state.nextCursor;
   }
 
-  async function loadProposals(append = false) {
+  async function loadProposals(append = false, limit = 24) {
     const target = $("[data-index-status]");
     target.textContent = append ? "Loading more proposals…" : "Refreshing the public index…";
     try {
-      const payload = await requestJson(buildProposalQuery(state.filters, append ? state.nextCursor : undefined));
+      const payload = await requestJson(buildProposalQuery(state.filters, append ? state.nextCursor : undefined, limit));
       state.proposals = append ? [...state.proposals, ...payload.data] : payload.data;
       state.nextCursor = payload.page?.nextCursor ?? null;
       renderProposals();
@@ -87,24 +90,27 @@
   function attentionCard(proposal, primary) {
     const days = daysUntil(proposal.votingEndsAt);
     const deadline = days === null ? "No deadline" : days <= 0 ? "Voting window ended" : `${days} day${days === 1 ? "" : "s"} remaining`;
-    const risk = proposal.riskLevel ? `${titleCase(proposal.riskLevel)} risk · ${proposal.riskScore}/100` : "Awaiting assessment";
-    const reason = proposal.recommendation === "manual_review"
-      ? "GenLayer’s accepted assessment recommends human review before governance participants rely on this proposal’s assumptions or implementation plan."
-      : "This active proposal is assessment-eligible and remains within its public voting window.";
-    return `<article class="attention-card ${primary ? "is-primary" : ""}"><p class="dao-line">${escapeHtml(proposal.daoName)} · ${escapeHtml(proposal.space)}</p><h3>${escapeHtml(proposal.title)}</h3><p class="attention-reason">${escapeHtml(reason)}</p><div class="attention-meta"><span class="badge badge-active">${escapeHtml(titleCase(proposal.status))}</span><span class="badge ${riskClass(proposal.riskLevel)}">${escapeHtml(risk)}</span><span class="badge">${escapeHtml(deadline)}</span></div><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">Why this needs review →</button></article>`;
+    const risk = assessmentSignal(proposal);
+    const reason = proposal.assessmentVersion === "2"
+      ? `${proposal.findingCount ?? 0} evidence-backed findings and ${proposal.unresolvedCount ?? 0} unresolved questions are available for inspection.`
+      : proposal.riskLevel
+        ? "A legacy assessment exists. Its historical score does not represent a probability or a defined weighted total."
+        : "This proposal remains within its public voting window and awaits due-diligence review.";
+    return `<article class="attention-card ${primary ? "is-primary" : ""}"><p class="dao-line">${escapeHtml(proposal.daoName)} · ${escapeHtml(proposal.space)}</p><h3>${escapeHtml(proposal.title)}</h3><p class="attention-reason">${escapeHtml(reason)}</p><div class="attention-meta"><span class="badge badge-active">${escapeHtml(titleCase(proposal.status))}</span><span class="badge">${escapeHtml(risk)}</span><span class="badge">${escapeHtml(deadline)}</span></div><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">Inspect this proposal →</button></article>`;
   }
 
   async function loadAttention() {
     const target = $("[data-attention]");
     try {
       const payload = await requestJson(buildProposalQuery({ status: "active" }));
-      const ranked = payload.data.sort((a, b) => (b.riskScore ?? -1) - (a.riskScore ?? -1) || (daysUntil(a.votingEndsAt) ?? 999) - (daysUntil(b.votingEndsAt) ?? 999)).slice(0, 2);
+      const ranked = payload.data.sort((a, b) => (priorityRank[b.reviewPriority] ?? 0) - (priorityRank[a.reviewPriority] ?? 0)
+        || (daysUntil(a.votingEndsAt) ?? 999) - (daysUntil(b.votingEndsAt) ?? 999)).slice(0, 2);
       target.innerHTML = ranked.length ? ranked.map((proposal, index) => attentionCard(proposal, index === 0)).join("") : '<div class="empty-block">No active proposal currently requires priority review.</div>';
     } catch (error) { target.innerHTML = `<div class="error-block">Priority queue unavailable: ${escapeHtml(error.message)}</div>`; }
   }
 
   function assessmentRow(proposal) {
-    return `<article class="assessment-row"><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">${escapeHtml(proposal.title)}<small>${escapeHtml(proposal.daoName)}</small></button><span class="${riskClass(proposal.riskLevel)}">${escapeHtml(titleCase(proposal.riskLevel))} · ${escapeHtml(proposal.riskScore)}</span><span>${escapeHtml(titleCase(proposal.recommendation))}</span><span>${escapeHtml(formatDate(proposal.assessedAt))}</span><button class="proposal-title-button row-arrow" type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}" aria-label="Open assessment">→</button></article>`;
+    return `<article class="assessment-row"><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">${escapeHtml(proposal.title)}<small>${escapeHtml(proposal.daoName)}</small></button><span>${escapeHtml(assessmentSignal(proposal))}</span><span>${escapeHtml(proposal.assessmentVersion === "2" ? "Consensus findings" : "Legacy model")}</span><span>${escapeHtml(formatDate(proposal.assessedAt))}</span><button class="proposal-title-button row-arrow" type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}" aria-label="Open assessment">→</button></article>`;
   }
 
   async function loadAssessments() {
@@ -134,16 +140,53 @@
   function fact(label, value) { return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd></div>`; }
   function evidenceItem(label, value, href) { return `<div class="evidence-item"><span>${escapeHtml(label)}</span>${href ? `<a href="${escapeHtml(safeHttpUrl(href))}" target="_blank" rel="noreferrer">${escapeHtml(value)} ↗</a>` : `<strong>${escapeHtml(value ?? "—")}</strong>`}</div>`; }
 
+  function renderDueDiligence(assessment, changes = []) {
+    const overview = assessment.overview;
+    const claims = assessment.materialClaims ?? [], findings = assessment.findings ?? [];
+    const questions = assessment.unresolvedQuestions ?? [], steps = assessment.executionMap ?? [];
+    const evidence = assessment.evidence ?? [];
+    const evidenceById = Object.fromEntries(evidence.map((item) => [item.id, item]));
+    const claimCounts = claims.reduce((counts, claim) => { counts[claim.status] = (counts[claim.status] ?? 0) + 1; return counts; }, {});
+    const list = (items) => items.length ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : '<p class="due-empty">None identified in the reviewed proposal material.</p>';
+    const refs = (ids) => (ids ?? []).map((id) => {
+      const item = evidenceById[id];
+      return item ? `<a href="#evidence-${escapeHtml(item.id)}">${escapeHtml(item.description)}</a>` : "";
+    }).filter(Boolean).join(" · ");
+    return `<div class="due-diligence"><p class="overline">Consensus-backed due diligence · v2</p>
+      <h3>What this proposal does</h3><p>${escapeHtml(overview.purpose)}</p>
+      <h4>Requested actions</h4>${list(overview.requestedActions ?? [])}
+      <div class="due-facts">${fact("Assets affected", (overview.assetsAffected ?? []).join("; ") || "None identified")}${fact("Permissions changed", (overview.permissionsChanged ?? []).join("; ") || "None identified")}${fact("Control changes", (overview.controlChanges ?? []).join("; ") || "None identified")}</div>
+      <h3>Material claims <small>${claims.length}</small></h3>
+      <p class="due-counts">${["supported", "partially_supported", "unverified", "contradicted"].map((status) => `${escapeHtml(titleCase(status))}: ${claimCounts[status] ?? 0}`).join(" · ")}</p>
+      ${claims.length ? claims.map((claim) => `<details class="due-item"><summary><span>${escapeHtml(claim.claim)}</span><strong>${escapeHtml(titleCase(claim.status))}</strong></summary><p>${escapeHtml(claim.explanation)}</p><blockquote>${escapeHtml(claim.sourceExcerpt)}</blockquote>${claim.counterExcerpt ? `<blockquote>${escapeHtml(claim.counterExcerpt)}</blockquote>` : ""}<p>Confidence: ${escapeHtml(titleCase(claim.confidence))} · ${claim.claimScope === "proposal_action" ? "Proposal action" : "External factual claim"}</p><p>Evidence: ${refs(claim.evidence)}</p></details>`).join("") : '<p class="due-empty">No measurable material claims identified.</p>'}
+      <h3>Material findings <small>${findings.length}</small></h3>
+      ${findings.length ? findings.map((finding) => `<article class="due-item"><h4>${escapeHtml(finding.title)}</h4><p class="due-meta">${escapeHtml(titleCase(finding.severity))} severity · ${escapeHtml(titleCase(finding.confidence))} confidence · ${finding.consensus?.state === "accepted" ? "Consensus accepted" : "Consensus unavailable"}</p><dl><dt>Observed</dt><dd>${escapeHtml(finding.observation)}</dd>${finding.sourceExcerpt ? `<dt>Source passage</dt><dd><blockquote>${escapeHtml(finding.sourceExcerpt)}</blockquote></dd>` : ""}<dt>Why it matters</dt><dd>${escapeHtml(finding.whyItMatters)}</dd><dt>Existing safeguards</dt><dd>${escapeHtml((finding.existingSafeguards ?? []).join("; ") || "None identified")}</dd><dt>Missing safeguards</dt><dd>${escapeHtml((finding.missingSafeguards ?? []).join("; ") || "None identified")}</dd>${finding.enforcementMechanism ? `<dt>Enforcement</dt><dd>${escapeHtml(finding.enforcementMechanism)}</dd>` : ""}${finding.recoveryMechanism ? `<dt>Recovery</dt><dd>${escapeHtml(finding.recoveryMechanism)}</dd>` : ""}${finding.humanDependencies?.length ? `<dt>Human dependencies</dt><dd>${escapeHtml(finding.humanDependencies.join("; "))}</dd>` : ""}${finding.technicalDependencies?.length ? `<dt>Technical dependencies</dt><dd>${escapeHtml(finding.technicalDependencies.join("; "))}</dd>` : ""}<dt>Reversibility</dt><dd>${escapeHtml(String(finding.reversible))}</dd>${finding.uncertainty ? `<dt>Uncertainty</dt><dd>${escapeHtml(finding.uncertainty)}</dd>` : ""}<dt>Evidence</dt><dd>${refs(finding.evidence)}</dd></dl></article>`).join("") : '<p class="due-empty">No material finding identified in the reviewed proposal material.</p>'}
+      <h3>Execution map</h3>${steps.length ? `<ol class="due-steps">${steps.map((step) => `<li><strong>${escapeHtml(step.action)}</strong>${step.amount || step.asset ? `<span>${escapeHtml([step.amount, step.asset].filter(Boolean).join(" "))}</span>` : ""}<small>Reversible: ${escapeHtml(String(step.reversible))} · ${refs(step.evidence)}</small></li>`).join("")}</ol>` : '<p class="due-empty">No execution step identified.</p>'}
+      <h3>Unresolved questions <small>${questions.length}</small></h3>${questions.length ? questions.map((question) => `<article class="due-item"><h4>${escapeHtml(question.question)}</h4><p>${escapeHtml(question.whyItMatters)}</p>${question.evidenceGap ? `<p>Evidence gap: ${escapeHtml(question.evidenceGap)}</p>` : ""}</article>`).join("") : '<p class="due-empty">No material question identified in the reviewed proposal material.</p>'}
+      <h3>Changes since previous revision <small>${changes.filter((change) => change.significance === "material").length} material</small></h3>
+      ${changes.length ? changes.map((change) => `<article class="due-item"><h4>${escapeHtml(change.field)}</h4><p>${escapeHtml(change.previousValue ?? "—")} → ${escapeHtml(change.currentValue ?? "—")}</p><small>${escapeHtml(change.explanation)}</small></article>`).join("") : '<p class="due-empty">No earlier indexed revision is available for comparison.</p>'}
+      <h3>Evidence</h3>${evidence.map((item) => `<div class="due-evidence" id="evidence-${escapeHtml(item.id)}"><a href="${escapeHtml(safeHttpUrl(item.locator))}" target="_blank" rel="noreferrer">${escapeHtml(item.description)} ↗</a><small>Validator-retrieved proposal · SHA-256 ${escapeHtml(short(item.contentHash, 10, 8))}</small></div>`).join("")}
+      <div class="due-priority"><span>Review priority: ${escapeHtml(titleCase(assessment.reviewPriority))}</span><p>${escapeHtml(assessment.reviewPriorityExplanation)}</p><small>Review priority identifies where human attention may be useful. It is not a voting recommendation.</small></div>
+      <p class="due-consensus">GenLayer validators accepted source-grounded material facts through independent proposal retrieval and validator checks. Consensus validates the process; it does not eliminate uncertainty or replace governance judgment.</p></div>`;
+  }
+
   function renderRecord(proposal) {
     $("[data-record-kicker]").textContent = `${proposal.daoName} / ${proposal.space}`;
     $("[data-record-title]").textContent = proposal.title;
-    $("[data-record-intro]").textContent = "Canonical proposal material with its current voting state and latest QuorumX assessment evidence.";
+    $("[data-record-intro]").textContent = "Review the proposal's actions, available evidence, and what remains uncertain.";
     $("[data-record-facts]").innerHTML = [fact("Proposal status", titleCase(proposal.status)), fact("Voting ends", formatDate(proposal.votingEndsAt)), fact("Proposer", proposal.authorAddress), fact("Snapshot space", proposal.space)].join("");
     $("[data-record-body]").textContent = proposal.bodyText || "The canonical source contains no proposal body.";
+    $("[data-due-diligence]").innerHTML = proposal.assessmentVersion === "2" && proposal.dueDiligence
+      ? renderDueDiligence(proposal.dueDiligence, proposal.changesSincePreviousRevision ?? [])
+      : proposal.riskLevel
+        ? '<h3>Legacy risk assessment</h3><p>This record uses the earlier scoring model. Its score is not a probability or a mathematically derived measure. No v2 findings have been inferred from it.</p>'
+        : '<h3>Due diligence pending</h3><p>No accepted due-diligence findings are available for this revision yet. The original proposal remains available below.</p>';
     const accepted = proposal.assessmentStatus === "finalized";
     const score = proposal.riskScore ?? "—";
     const transactionUrl = proposal.transactionHash ? `https://explorer-studio.genlayer.com/tx/${proposal.transactionHash}` : undefined;
-    $("[data-record-evidence]").innerHTML = `<h3>Risk assessment</h3><div class="verdict"><strong>${escapeHtml(proposal.riskLevel ? `${titleCase(proposal.riskLevel)} · ${score}/100` : "Not assessed")}</strong><span>${escapeHtml(proposal.recommendation ? titleCase(proposal.recommendation) : "No recommendation")}</span></div><ol class="proof-steps"><li>Canonical source found</li><li>Proposal material indexed</li><li>${accepted ? "Assessment accepted" : `Assessment ${assessmentLabel(proposal.assessmentStatus).toLowerCase()}`}</li></ol><div class="evidence-list">${evidenceItem("Source", "Open Snapshot proposal", proposal.canonicalUrl)}${evidenceItem("Proposer", short(proposal.authorAddress))}${evidenceItem("Revision", short(proposal.revisionHash, 8, 6))}${evidenceItem("Transaction", short(proposal.transactionHash, 8, 6), transactionUrl)}${evidenceItem("Network", proposal.transactionHash ? "GenLayer Studionet" : "—")}${evidenceItem("Consensus", proposal.consensusState ? titleCase(proposal.consensusState) : "—")}</div>${transactionUrl ? `<a class="button button-ink" href="${escapeHtml(transactionUrl)}" target="_blank" rel="noreferrer">View transaction ↗</a>` : ""}`;
+    const isV2 = proposal.assessmentVersion === "2" && proposal.dueDiligence;
+    const versionLabel = isV2 ? `${titleCase(proposal.dueDiligence.reviewPriority)} review priority` : proposal.riskLevel ? "Legacy risk assessment" : "No accepted assessment";
+    $("[data-record-evidence]").innerHTML = `<h3>Evidence & provenance</h3><div class="verdict"><strong>${escapeHtml(versionLabel)}</strong><span>${escapeHtml(isV2 ? `${proposal.dueDiligence.findings.length} findings · ${proposal.dueDiligence.materialClaims.length} claims` : proposal.riskLevel ? `Historical score: ${score}/100 (not mathematically interpretable)` : "Awaiting assessment")}</span></div><ol class="proof-steps"><li>Canonical source found</li><li>Proposal material indexed</li><li>${accepted ? "Assessment accepted" : `Assessment ${assessmentLabel(proposal.assessmentStatus).toLowerCase()}`}</li></ol><div class="evidence-list">${evidenceItem("Source", "Open Snapshot proposal", proposal.canonicalUrl)}${evidenceItem("Proposer", short(proposal.authorAddress))}${evidenceItem("Revision", short(proposal.revisionHash, 8, 6))}${evidenceItem("Transaction", short(proposal.transactionHash, 8, 6), transactionUrl)}${evidenceItem("Network", proposal.transactionHash ? "GenLayer Studionet" : "—")}${evidenceItem("Consensus", isV2 ? "Source-grounded material facts accepted" : proposal.consensusState ? titleCase(proposal.consensusState) : "—")}</div>${transactionUrl ? `<a class="button button-ink" href="${escapeHtml(transactionUrl)}" target="_blank" rel="noreferrer">View transaction ↗</a>` : ""}`;
   }
 
   async function openRecord(canonicalId) {
@@ -174,13 +217,25 @@
   }
 
   function setupFilters() {
+    const searchInputs = $$("[data-search]"), indexSearch = $("[data-filter-form] [data-search]");
     $("[data-filter-form]").addEventListener("submit", (event) => {
       event.preventDefault();
-      state.search = $("[data-search]").value;
+      state.search = indexSearch.value;
       state.filters = { space: $("[data-filter-dao]").value, status: $("[data-filter-status]").value, assessment: $("[data-filter-assessment]").value };
-      loadProposals();
+      loadProposals(false, state.search ? 100 : 24);
     });
-    $("[data-search]").addEventListener("input", (event) => { state.search = event.target.value; renderProposals(); });
+    searchInputs.forEach((input) => input.addEventListener("input", () => {
+      state.search = input.value;
+      searchInputs.forEach((searchInput) => { if (searchInput !== input) searchInput.value = input.value; });
+      renderProposals();
+    }));
+    $("[data-header-search]").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      state.search = event.currentTarget.value;
+      loadProposals(false, state.search ? 100 : 24);
+      $("#proposals").scrollIntoView({ behavior: "smooth" });
+    });
     $("[data-load-more]").addEventListener("click", () => loadProposals(true));
   }
 
@@ -207,51 +262,107 @@
     if (window.ethereum?.on) window.ethereum.on("accountsChanged", (accounts) => { label.textContent = accounts?.[0] ? short(accounts[0]) : "Connect wallet"; });
   }
 
-  function logoPoint(kind, t, random) {
-    const angle = t * Math.PI * 2;
-    if (kind === 0) {
-      const row = Math.floor(random * 3), radiusX = 28 - row * 4;
-      return { x: Math.cos(angle) * radiusX, y: (row - 1) * 18 + Math.sin(angle) * 6 };
-    }
-    if (kind === 1) {
-      const block = Math.floor(random * 4), radius = Math.sqrt(Math.random()) * 10;
-      const centers = [[-15,-15],[15,-15],[-15,15],[15,15]];
-      return { x: centers[block][0] + Math.cos(angle) * radius, y: centers[block][1] + Math.sin(angle) * radius };
-    }
-    if (kind === 2) {
-      const side = Math.floor(random * 6);
-      const points = [[0,-32],[28,-16],[28,16],[0,32],[-28,16],[-28,-16],[0,-32]];
-      const from = points[side], to = points[side + 1];
-      return { x: from[0] + (to[0] - from[0]) * t, y: from[1] + (to[1] - from[1]) * t };
-    }
-    const x = Math.random() * 2 - 1;
-    return { x: x * 31, y: (Math.random() * 2 - 1) * (1 - Math.abs(x)) * 38 };
-  }
-
   function setupParticles() {
     const canvas = $("#dao-particles"); if (!canvas) return;
     const context = canvas.getContext("2d"), reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let particles = [], frame = 0, width = 0, height = 0;
+    const marks = [
+      { src: "assets/balancer.webp", center: .40, mode: "dark" },
+      { src: "assets/safe.webp", center: .55, mode: "dark" },
+      { src: "assets/arbitrum.webp", center: .70, mode: "arbitrum" },
+      { src: "assets/ens.webp", center: .85, mode: "light" },
+    ];
+    let cloud = [], logoParticles = [], logoMasks = [], frame = 0, width = 0, height = 0;
+
+    function normalRandom() {
+      return Math.sqrt(-2 * Math.log(Math.max(Math.random(), .0001))) * Math.cos(Math.PI * 2 * Math.random());
+    }
+
+    function sampleLogo(mark) {
+      return new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => {
+          const sampleCanvas = document.createElement("canvas");
+          sampleCanvas.width = sampleCanvas.height = 160;
+          const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+          sampleContext.drawImage(image, 0, 0, 160, 160);
+          const pixels = sampleContext.getImageData(0, 0, 160, 160).data;
+          const points = [];
+          for (let y = 0; y < 160; y += 2) for (let x = 0; x < 160; x += 2) {
+            const offset = (y * 160 + x) * 4, red = pixels[offset], green = pixels[offset + 1], blue = pixels[offset + 2];
+            const luminance = .2126 * red + .7152 * green + .0722 * blue;
+            const isMark = mark.mode === "dark"
+              ? luminance < 86
+              : mark.mode === "arbitrum"
+                ? (x - 80) ** 2 + (y - 80) ** 2 < 68 ** 2 && luminance > 112 && luminance < 250
+                : Math.hypot(255 - red, 255 - green, 255 - blue) > 38;
+            if (isMark) points.push({ x: x - 80, y: y - 80 });
+          }
+          resolve(points);
+        };
+        image.onerror = () => resolve([]);
+        image.src = mark.src;
+      });
+    }
+
+    function placeLogos() {
+      logoParticles = [];
+      logoMasks.forEach((mask, markIndex) => {
+        if (!mask.length) return;
+        const mark = marks[markIndex], mobile = width < 820, centers = mobile ? [.13, .38, .63, .88] : marks.map((item) => item.center);
+        const count = 680, scale = Math.min(width * (mobile ? .18 : .095), mobile ? 90 : 132) / 160;
+        for (let index = 0; index < count; index += 1) {
+          const point = mask[Math.floor(index * mask.length / count) % mask.length];
+          const targetX = width * centers[markIndex] + point.x * scale;
+          const targetY = height * (mobile ? .73 : .41) + point.y * scale;
+          logoParticles.push({ x: reduced ? targetX : Math.random() * width, y: reduced ? targetY : Math.random() * height, targetX, targetY, speed: .055 + Math.random() * .025, phase: Math.random() * Math.PI * 2, size: .7 + Math.random() * 1.25 });
+        }
+      });
+    }
+
     function resize() {
       const rect = canvas.getBoundingClientRect(), ratio = Math.min(devicePixelRatio || 1, 2);
       const nextWidth = Math.round(rect.width), nextHeight = Math.round(rect.height);
-      if (nextWidth === width && nextHeight === height && particles.length) return;
+      if (nextWidth === width && nextHeight === height && cloud.length) return;
       width = nextWidth; height = nextHeight; canvas.width = width * ratio; canvas.height = height * ratio; context.setTransform(ratio,0,0,ratio,0,0);
-      particles = Array.from({ length: reduced ? 560 : 1200 }, (_, index) => {
-        const kind = index % 4, random = Math.random(), point = logoPoint(kind, Math.random(), random);
-        return { kind, tx: width * ((kind + .5) / 4) + point.x * 1.35, ty: height * .47 + point.y * 1.35, x: Math.random()*width, y: Math.random()*height, speed: .065+Math.random()*.035, phase: Math.random()*Math.PI*2, size: .8+Math.random()*1.2 };
+      cloud = Array.from({ length: reduced ? 3000 : 5600 }, () => {
+        const x = width * (.19 + Math.random() * .82), progress = x / width;
+        const centerY = height * (.37 + .055 * Math.sin(progress * 7.2) + .02 * Math.sin(progress * 15.5));
+        const y = centerY + normalRandom() * height * .085;
+        const nearestMark = Math.min(...marks.map((mark) => Math.abs(progress - mark.center)));
+        return { x, y, phase: Math.random() * Math.PI * 2, size: .45 + Math.random() * (nearestMark < .055 ? 2.4 : 1.5), opacity: .25 + Math.random() * .5 };
       });
+      placeLogos();
     }
+
     function draw(time = 0) {
-      context.clearRect(0,0,width,height); context.fillStyle = "#f0c766";
-      for (const particle of particles) {
-        particle.x += (particle.tx - particle.x) * particle.speed; particle.y += (particle.ty - particle.y) * particle.speed;
-        const drift = reduced ? 0 : Math.sin(time*.0005 + particle.phase)*2.2;
-        context.globalAlpha = .58 + .4*Math.abs(Math.sin(time*.00035 + particle.phase)); context.beginPath(); context.arc(particle.x+drift,particle.y,particle.size,0,Math.PI*2); context.fill();
+      context.clearRect(0, 0, width, height);
+      context.globalCompositeOperation = "lighter";
+      for (const particle of cloud) {
+        const drift = reduced ? 0 : Math.sin(time * .00018 + particle.phase) * 5;
+        context.globalAlpha = particle.opacity * (.72 + .28 * Math.sin(time * .0003 + particle.phase));
+        context.fillStyle = "#c88e30";
+        context.beginPath(); context.arc(particle.x + drift, particle.y + drift * .35, particle.size, 0, Math.PI * 2); context.fill();
       }
-      context.globalAlpha = 1; if (!reduced) frame = requestAnimationFrame(draw);
+      for (const mark of marks) {
+        const centerX = width * mark.center, centerY = height * (width < 820 ? .73 : .41);
+        const glow = context.createRadialGradient(centerX, centerY, 2, centerX, centerY, Math.min(width * .12, 172));
+        glow.addColorStop(0, "rgba(215, 151, 43, .20)"); glow.addColorStop(1, "rgba(215, 151, 43, 0)");
+        context.globalAlpha = 1; context.fillStyle = glow; context.fillRect(centerX - width * .15, centerY - height * .34, width * .3, height * .68);
+      }
+      for (const particle of logoParticles) {
+        if (!reduced) {
+          particle.x += (particle.targetX - particle.x) * particle.speed;
+          particle.y += (particle.targetY - particle.y) * particle.speed;
+        }
+        const shimmer = reduced ? 1 : .82 + .18 * Math.sin(time * .001 + particle.phase);
+        context.globalAlpha = shimmer; context.fillStyle = "#f4c65f";
+        context.beginPath(); context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2); context.fill();
+      }
+      context.globalAlpha = 1; context.globalCompositeOperation = "source-over";
+      if (!reduced) frame = requestAnimationFrame(draw);
     }
     const observer = new ResizeObserver(resize); observer.observe(canvas); resize(); draw();
+    Promise.all(marks.map(sampleLogo)).then((masks) => { logoMasks = masks; placeLogos(); if (!reduced) { cancelAnimationFrame(frame); frame = requestAnimationFrame(draw); } else draw(); });
     window.addEventListener("pagehide", () => { cancelAnimationFrame(frame); observer.disconnect(); }, { once: true });
   }
 
@@ -260,5 +371,6 @@
     Promise.allSettled([loadSources(), loadAttention(), loadProposals(), loadAssessments()]);
   }
 
-  return { init, buildProposalQuery, proposalMatchesSearch, daysUntil, short, safeHttpUrl, assessmentLabel };
+  return { init, buildProposalQuery, proposalMatchesSearch, daysUntil, short, safeHttpUrl,
+    assessmentLabel, assessmentSignal, renderDueDiligence };
 });

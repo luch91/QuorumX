@@ -12,7 +12,9 @@ jest.mock("../src/database", () => ({
 jest.mock("../src/genlayer", () => ({
   getTransactionState: jest.fn(),
   readAssessment: jest.fn(),
+  readDueDiligence: jest.fn(),
   submitAssessment: jest.fn(),
+  submitDueDiligence: jest.fn(),
 }));
 jest.mock("../src/snapshot", () => ({ fetchRecentSnapshotProposals: jest.fn() }));
 
@@ -24,9 +26,9 @@ import {
   recordSubmittedTransaction,
 } from "../src/database";
 import { runIndexerCycle } from "../src/cycle";
-import { getTransactionState, readAssessment, submitAssessment } from "../src/genlayer";
+import { getTransactionState, readAssessment, readDueDiligence, submitAssessment, submitDueDiligence } from "../src/genlayer";
 import { fetchRecentSnapshotProposals } from "../src/snapshot";
-import type { StoredAssessment } from "../src/domain";
+import type { StoredAssessment, StoredDueDiligenceAssessment } from "../src/domain";
 
 const assessment: StoredAssessment = {
   proposalKey: "snapshot:balancer.eth:p1",
@@ -116,5 +118,64 @@ describe("indexer cycle", () => {
       indexedFrom: "submitted_transaction",
     }));
     expect(result.transactionsRecovered).toBe(1);
+  });
+
+  it("submits v2 to its separate contract without reading or overwriting v1 state", async () => {
+    const v2Address = "0x3333333333333333333333333333333333333333" as const;
+    jest.mocked(claimAssessmentJob).mockResolvedValue({ ...job, assessmentVersion: "2" });
+    jest.mocked(submitDueDiligence).mockResolvedValue(`0x${"5".repeat(64)}`);
+    await runIndexerCycle({ ...settings, assessmentVersion: "2",
+      genlayer: { ...settings.genlayer, dueDiligenceContractAddress: v2Address } });
+    expect(readAssessment).not.toHaveBeenCalled();
+    expect(submitDueDiligence).toHaveBeenCalledWith(expect.anything(), job.source, `qx:v2:${job.revisionHash}`);
+    expect(recordSubmittedTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(),
+      `0x${"5".repeat(64)}`, "studionet", v2Address);
+  });
+
+  it("claims only jobs for the enabled assessment version", async () => {
+    await runIndexerCycle(settings);
+    expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "1");
+    await runIndexerCycle({ ...settings, assessmentVersion: "2" });
+    expect(claimAssessmentJob).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), "2");
+  });
+
+  it("reads the exact accepted v2 revision before finalizing", async () => {
+    const expectedHash = assessment.contentHash;
+    jest.mocked(listSubmittedJobs).mockResolvedValue([{
+      jobId: "1", attemptCount: 1, maxAttempts: 20, revisionId: "2", proposalKey: assessment.proposalKey,
+      transactionId: `0x${"6".repeat(64)}`, transactionRowId: "3", assessmentVersion: "2",
+      expectedContractContentHash: expectedHash,
+    }]);
+    jest.mocked(getTransactionState).mockResolvedValue({ state: "accepted" });
+    jest.mocked(readDueDiligence).mockResolvedValue({ ...assessment, assessmentVersion: "2" } as unknown as StoredDueDiligenceAssessment);
+    await runIndexerCycle({ ...settings, enableWrites: false, assessmentVersion: "2",
+      genlayer: { ...settings.genlayer, dueDiligenceContractAddress: "0x3333333333333333333333333333333333333333" } });
+    expect(readDueDiligence).toHaveBeenCalledWith(expect.objectContaining({
+      dueDiligenceContractAddress: "0x3333333333333333333333333333333333333333",
+    }), assessment.proposalKey, expectedHash);
+    expect(finalizeAssessment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ transactionRowId: "3" }));
+  });
+
+  it("leaves in-flight v2 transactions untouched when the v2 contract is disabled", async () => {
+    jest.mocked(listSubmittedJobs).mockResolvedValue([{
+      jobId: "1", attemptCount: 1, maxAttempts: 20, revisionId: "2", proposalKey: assessment.proposalKey,
+      transactionId: `0x${"8".repeat(64)}`, transactionRowId: "3", assessmentVersion: "2",
+      expectedContractContentHash: assessment.contentHash,
+    }]);
+    const result = await runIndexerCycle({ ...settings, enableWrites: false });
+    expect(getTransactionState).not.toHaveBeenCalled();
+    expect(result.errors).toEqual([]);
+  });
+
+  it("does not finalize a transaction against the wrong source revision", async () => {
+    jest.mocked(listSubmittedJobs).mockResolvedValue([{
+      jobId: "1", attemptCount: 1, maxAttempts: 20, revisionId: "2", proposalKey: assessment.proposalKey,
+      transactionId: `0x${"7".repeat(64)}`, transactionRowId: "3",
+      expectedContractContentHash: "d".repeat(64),
+    }]);
+    jest.mocked(getTransactionState).mockResolvedValue({ state: "accepted" });
+    jest.mocked(readAssessment).mockResolvedValue(assessment);
+    await runIndexerCycle({ ...settings, enableWrites: false });
+    expect(finalizeAssessment).not.toHaveBeenCalled();
   });
 });

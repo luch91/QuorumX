@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -41,22 +42,26 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest contracts/tests -q
       - name: GenVM static safety lint
-        run: genvm-lint lint contracts/governance_risk.py --json
+        run: |
+          genvm-lint lint contracts/governance_risk.py --json
+          genvm-lint lint contracts/governance_due_diligence.py --json
       - name: GenVM semantic validation (known upstream artifact issue)
         shell: bash
         run: |
           set +e
-          output="$(genvm-lint check contracts/governance_risk.py --json 2>&1)"
-          status=$?
-          printf '%s\n' "$output"
-          if [ "$status" -eq 0 ]; then
-            exit 0
-          fi
-          if printf '%s' "$output" | grep -q 'E101.*HTTP Error 404'; then
-            echo '::warning::genvm-linter semantic validation is blocked by the upstream GenVM release asset 404; static lint passed.'
-            exit 0
-          fi
-          exit "$status"
+          for contract in contracts/governance_risk.py contracts/governance_due_diligence.py; do
+            output="$(genvm-lint check "$contract" --json 2>&1)"
+            status=$?
+            printf '%s\n' "$output"
+            if [ "$status" -eq 0 ]; then
+              continue
+            fi
+            if printf '%s' "$output" | grep -q 'E101.*HTTP Error 404'; then
+              echo "::warning::genvm-linter semantic validation for $contract is blocked by upstream GenVM release asset 404; static lint passed."
+              continue
+            fi
+            exit "$status"
+          done
 
   secrets:
     name: Secret scan

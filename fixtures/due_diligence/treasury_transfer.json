@@ -1,0 +1,6 @@
+{
+  "id": "fixture-treasury-transfer",
+  "title": "Treasury grant for a twelve-month ecosystem program",
+  "body": "The DAO will transfer 5,000,000 ARB from its treasury to a 3/5 Safe at 0x1111111111111111111111111111111111111111. The program operator will distribute funds against quarterly milestones for twelve months. Three signatures are required for each Safe transfer. The proposal does not specify an automatic clawback or escrow mechanism for unused funds. The operator reports milestone completion; it does not name an independent verifier.",
+  "expected": { "claims": [], "findingTypes": ["treasury_exposure", "missing_safeguard"], "unresolved": ["Who independently verifies milestones?", "What happens to unused funds?"] }
+}
