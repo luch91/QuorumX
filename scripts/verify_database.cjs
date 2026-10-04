@@ -14,7 +14,9 @@ async function main() {
         (select count(*)::integer from information_schema.tables where table_schema = 'quorumx') as table_count,
         has_schema_privilege(current_user, 'quorumx', 'USAGE') as schema_usage,
         has_table_privilege(current_user, 'quorumx.proposals', 'SELECT,INSERT,UPDATE') as proposal_rw,
-        has_table_privilege(current_user, 'quorumx.proposals', 'DELETE') as proposal_delete
+        has_table_privilege(current_user, 'quorumx.proposals', 'DELETE') as proposal_delete,
+        has_table_privilege(current_user, 'quorumx.due_diligence_assessments', 'SELECT,INSERT,UPDATE') as due_diligence_rw,
+        has_table_privilege(current_user, 'quorumx.due_diligence_assessments', 'DELETE') as due_diligence_delete
     `);
     console.log(JSON.stringify(result.rows[0]));
   } finally {

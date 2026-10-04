@@ -10,7 +10,10 @@ import {
   withDatabase,
 } from "./database";
 import type { CycleResult } from "./domain";
-import { getTransactionState, readAssessment, submitAssessment, type GenLayerSettings } from "./genlayer";
+import {
+  getTransactionState, readAssessment, readDueDiligence, submitAssessment, submitDueDiligence,
+  type GenLayerSettings,
+} from "./genlayer";
 import { fetchRecentSnapshotProposals } from "./snapshot";
 import { snapshotSourceForSpace } from "./sources";
 
@@ -19,6 +22,7 @@ export interface CycleSettings {
   snapshotSpaces: string[];
   snapshotLimit: number;
   enableWrites: boolean;
+  assessmentVersion?: "1" | "2";
   genlayer: GenLayerSettings;
   workerId?: string;
   fetcher?: typeof fetch;
@@ -42,12 +46,21 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
   await withDatabase(settings.databaseUrl, async (client) => {
     const submitted = await listSubmittedJobs(client);
     for (const job of submitted) {
+      if (job.assessmentVersion === "2"
+        && (settings.assessmentVersion !== "2" || !settings.genlayer.dueDiligenceContractAddress)) continue;
       try {
         const transaction = await getTransactionState(settings.genlayer, job.transactionId);
         if (transaction.state === "accepted") {
-          const assessment = await readAssessment(settings.genlayer, job.proposalKey);
+          const assessment = job.assessmentVersion === "2"
+            ? await readDueDiligence(settings.genlayer, job.proposalKey, job.expectedContractContentHash)
+            : await readAssessment(settings.genlayer, job.proposalKey);
           if (!assessment) {
             await markSubmittedTerminal(client, job, "reverted", "finalized without stored assessment state");
+            result.transactionsRecovered += 1;
+            continue;
+          }
+          if (job.expectedContractContentHash && assessment.contentHash !== job.expectedContractContentHash) {
+            await markSubmittedTerminal(client, job, "undetermined", "contract content hash does not match indexed revision");
             result.transactionsRecovered += 1;
             continue;
           }
@@ -72,7 +85,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
       const source = snapshotSourceForSpace(space);
       try {
         const proposals = await fetchRecentSnapshotProposals(space, settings.fetcher ?? fetch, settings.snapshotLimit);
-        const ingested = await ingestSnapshotProposals(client, source, proposals);
+        const ingested = await ingestSnapshotProposals(client, source, proposals, new Date(), settings.assessmentVersion ?? "1");
         result.sourcesPolled += 1;
         result.proposalsSeen += ingested.proposalsSeen;
         result.revisionsCreated += ingested.revisionsCreated;
@@ -87,9 +100,15 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
     }
 
     if (!settings.enableWrites || !settings.genlayer.privateKey) return;
-    const job = await claimAssessmentJob(client, settings.workerId ?? crypto.randomUUID());
+    const job = await claimAssessmentJob(client, settings.workerId ?? crypto.randomUUID(), settings.assessmentVersion ?? "1");
     if (!job) return;
     try {
+      if (job.assessmentVersion === "2") {
+        const transactionId = await submitDueDiligence(settings.genlayer, job.source, `qx:v2:${job.revisionHash}`);
+        await recordSubmittedTransaction(client, job, transactionId, "studionet", settings.genlayer.dueDiligenceContractAddress!);
+        result.jobsProcessed += 1;
+        return;
+      }
       const existing = await readAssessment(settings.genlayer, job.proposalKey);
       if (existing?.contentHash === job.expectedContractContentHash) {
         await finalizeAssessment(client, {

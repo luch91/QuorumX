@@ -25,4 +25,6 @@ Set `DATABASE_URL` to the runtime-role connection only for the command invocatio
 npm run db:verify
 ```
 
-Successful output must report seven tables, `schema_usage: true`, `proposal_rw: true`, and `proposal_delete: false`.
+Successful output after migration 0006 reports eight tables, `schema_usage: true`,
+`proposal_rw: true`, `due_diligence_rw: true`, and both delete privileges `false`.
+Migration 0006 keeps v1 assessments intact and adds revision-bound v2 records.

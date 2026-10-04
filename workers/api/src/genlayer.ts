@@ -3,12 +3,44 @@ import { studionet } from "genlayer-js/chains";
 import { TransactionHashVariant } from "genlayer-js/types";
 import type { TransactionHash } from "genlayer-js/types";
 import type { StoredAssessment } from "./domain";
+import type { StoredDueDiligenceAssessment } from "./domain";
+import { parseDueDiligence } from "./due_diligence";
 import { classifyTransaction, type TransactionState } from "./transaction";
 
 export interface GenLayerSettings {
   contractAddress: `0x${string}`;
+  dueDiligenceContractAddress?: `0x${string}`;
   privateKey?: `0x${string}`;
   rpcUrl?: string;
+}
+
+export async function readDueDiligence(
+  settings: GenLayerSettings, proposalKey: string, contentHash?: string,
+): Promise<StoredDueDiligenceAssessment | undefined> {
+  if (!settings.dueDiligenceContractAddress) throw new Error("V2 contract address is not configured");
+  const raw = await clientFor(settings).readContract({
+    address: settings.dueDiligenceContractAddress,
+    functionName: contentHash ? "get_assessment_for_revision" : "get_assessment",
+    args: contentHash ? [proposalKey, contentHash] : [proposalKey],
+    transactionHashVariant: TransactionHashVariant.LATEST_FINAL,
+  });
+  return parseDueDiligence(raw, proposalKey);
+}
+
+export async function submitDueDiligence(
+  settings: GenLayerSettings,
+  source: { kind: "snapshot"; space: string; proposalId: string },
+  idempotencyKey: string,
+): Promise<string> {
+  if (!settings.privateKey || !settings.dueDiligenceContractAddress) {
+    throw new Error("V2 contract or signing key is not configured");
+  }
+  return clientFor(settings).writeContract({
+    address: settings.dueDiligenceContractAddress,
+    functionName: "assess",
+    args: [JSON.stringify(source), idempotencyKey],
+    value: 0n,
+  });
 }
 
 function clientFor(settings: GenLayerSettings) {

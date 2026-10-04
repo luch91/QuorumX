@@ -1,0 +1,6 @@
+{
+  "id": "fixture-unsupported-claims",
+  "title": "Growth initiative",
+  "body": "The program currently has 200,000 monthly active users and generated $40M in revenue last year. We project 50% annual growth. The proposal does not link analytics, audited accounts, or a reproducible methodology. It requests 100,000 USDC to fund outreach over six months.",
+  "expected": { "unverifiedClaims": ["200,000 monthly active users", "$40M in revenue", "50% annual growth"], "findingTypes": ["evidence_gap"] }
+}

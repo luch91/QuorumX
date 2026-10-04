@@ -5,6 +5,8 @@ const {
   proposalMatchesSearch,
   safeHttpUrl,
   short,
+  assessmentSignal,
+  renderDueDiligence,
 } = require("../app.js");
 
 describe("QuorumX frontend helpers", () => {
@@ -39,5 +41,46 @@ describe("QuorumX frontend helpers", () => {
     expect(assessmentLabel("in_progress")).toBe("In Progress");
     expect(assessmentLabel()).toBe("Not assessed");
     expect(short("0x1234567890abcdef")).toBe("0x1234…cdef");
+  });
+
+  test("demotes legacy scores and explains v2 findings without vote advice", () => {
+    expect(assessmentSignal({ riskLevel: "high", riskScore: 78 })).toBe("Legacy risk assessment");
+    expect(assessmentSignal({ assessmentVersion: "2", reviewPriority: "high", findingCount: 2 }))
+      .toBe("High review · 2 findings");
+    const html = renderDueDiligence({
+      overview: { purpose: "Transfer 5M ARB", requestedActions: ["Transfer 5M ARB"],
+        assetsAffected: ["ARB"], permissionsChanged: [], controlChanges: [] },
+      evidence: [{ id: "e1", locator: "https://snapshot.box/proposal/p1", description: "Proposal §4",
+        contentHash: "a".repeat(64) }],
+      materialClaims: [{ id: "c1", claim: "200k users", status: "unverified", explanation: "No independent evidence",
+        sourceExcerpt: "200k users", confidence: "low", claimScope: "external_factual", evidence: ["e1"] }],
+      findings: [{ id: "f1", title: "Treasury transfer", sourceExcerpt: "5M ARB", observation: "5M ARB moves", whyItMatters: "Control changes",
+        severity: "high", confidence: "medium", evidence: ["e1"], existingSafeguards: ["3/5 Safe"],
+        missingSafeguards: ["No clawback identified"], reversible: false,
+        consensus: { state: "accepted", method: "source_grounded_material_facts_v2" } }],
+      executionMap: [{ id: "s1", action: "Transfer 5M ARB", asset: "ARB", amount: "5000000", reversible: false,
+        evidence: ["e1"] }],
+      unresolvedQuestions: [{ id: "q1", question: "Who verifies milestones?", whyItMatters: "Funds may be disbursed" }],
+      reviewPriority: "high", reviewPriorityExplanation: "Large treasury transfer.",
+    }, [{ field: "Token amounts mentioned", previousValue: "3M ARB", currentValue: "5M ARB",
+      significance: "material", explanation: "Text changed" }]);
+    expect(html).toContain("No clawback identified");
+    expect(html).toContain("Source passage");
+    expect(html).toContain("Consensus accepted");
+    expect(html).toContain("200k users");
+    expect(html).toContain("3M ARB");
+    expect(html).toContain("not a voting recommendation");
+    expect(html).not.toContain("78/100");
+  });
+
+  test("escapes untrusted proposal and evidence text in due diligence", () => {
+    const html = renderDueDiligence({
+      overview: { purpose: '<img src=x onerror=alert(1)>', requestedActions: ["Review"],
+        assetsAffected: [], permissionsChanged: [], controlChanges: [] },
+      evidence: [], materialClaims: [], findings: [], executionMap: [], unresolvedQuestions: [],
+      reviewPriority: "low", reviewPriorityExplanation: "No material issue identified.",
+    });
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img src=x");
   });
 });

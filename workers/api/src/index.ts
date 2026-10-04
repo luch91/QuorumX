@@ -1,5 +1,5 @@
 import type { Client } from "pg";
-import { getAssessment, getProposal, listProposals, listSources } from "./api";
+import { getAssessment, getDueDiligence, getProposal, listProposals, listSources } from "./api";
 import { runIndexerCycle } from "./cycle";
 import { withDatabase } from "./database";
 import { snapshotSourceForSpace } from "./sources";
@@ -28,7 +28,14 @@ function pathValue(value: string): string {
 }
 
 function cycleSettings(env: Env) {
+  const configuredVersion: string = env.QUORUMX_ASSESSMENT_VERSION;
   if (!CONTRACT_ADDRESS.test(env.QUORUMX_CONTRACT_ADDRESS)) throw new Error("Contract address is invalid");
+  if (configuredVersion !== "1" && configuredVersion !== "2") {
+    throw new Error("Assessment version is invalid");
+  }
+  if (configuredVersion === "2" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)) {
+    throw new Error("V2 contract address is invalid");
+  }
   if (!PRIVATE_KEY.test(env.QUORUMX_GENLAYER_PRIVATE_KEY)) throw new Error("GenLayer signing key is invalid");
   const snapshotLimit = Number(env.QUORUMX_SNAPSHOT_LIMIT);
   if (!Number.isInteger(snapshotLimit) || snapshotLimit < 1 || snapshotLimit > 50) {
@@ -44,8 +51,12 @@ function cycleSettings(env: Env) {
     snapshotSpaces,
     snapshotLimit,
     enableWrites: env.QUORUMX_ENABLE_WRITES === "true",
+    assessmentVersion: configuredVersion as "1" | "2",
     genlayer: {
       contractAddress: env.QUORUMX_CONTRACT_ADDRESS as `0x${string}`,
+      ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)
+        ? { dueDiligenceContractAddress: env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS as `0x${string}` }
+        : {}),
       privateKey: env.QUORUMX_GENLAYER_PRIVATE_KEY as `0x${string}`,
       ...(env.QUORUMX_GENLAYER_RPC_URL ? { rpcUrl: env.QUORUMX_GENLAYER_RPC_URL } : {}),
     },
@@ -138,6 +149,11 @@ async function route(request: Request, env: Env): Promise<Response> {
       if (url.pathname.startsWith("/v1/assessments/")) {
         const proposalKey = pathValue(url.pathname.slice("/v1/assessments/".length));
         const assessment = await getAssessment(client, proposalKey);
+        return assessment ? json({ data: assessment }) : json({ error: "not_found" }, { status: 404 });
+      }
+      if (url.pathname.startsWith("/v2/proposals/") && url.pathname.endsWith("/due-diligence")) {
+        const canonicalId = pathValue(url.pathname.slice("/v2/proposals/".length, -"/due-diligence".length));
+        const assessment = await getDueDiligence(client, canonicalId);
         return assessment ? json({ data: assessment }) : json({ error: "not_found" }, { status: 404 });
       }
       return json({ error: "not_found" }, { status: 404 });
