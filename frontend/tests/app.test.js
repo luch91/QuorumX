@@ -7,12 +7,24 @@ const {
   short,
   assessmentSignal,
   renderDueDiligence,
+  resolveApiBase,
+  proposalPath,
+  isCurrentRequest,
+  mergeUniqueProposals,
+  particleBudget,
 } = require("../app.js");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 
 describe("QuorumX frontend helpers", () => {
+  test("uses an injected local API base and otherwise defaults to production", () => {
+    expect(resolveApiBase({ QUORUMX_API_BASE: "/local-api/" })).toBe("/local-api");
+    expect(resolveApiBase({})).toBe("/api");
+  });
   test("builds bounded API queries from supported filters", () => {
-    expect(buildProposalQuery({ status: "active", dao: "SafeDAO", ignored: "no" }, "40"))
-      .toBe("https://api.quorumx.dev/v1/proposals?limit=24&status=active&dao=SafeDAO&cursor=40");
+    expect(buildProposalQuery({ status: "active", dao: "SafeDAO", q: "Serendipity", sort: "priority", ignored: "no" }, "opaque"))
+      .toBe("/api/v1/proposals?limit=24&status=active&dao=SafeDAO&q=Serendipity&sort=priority&cursor=opaque");
+    expect(proposalPath("snapshot:space/proposal 1")).toBe("/proposals/snapshot%3Aspace%2Fproposal%201");
   });
 
   test("matches proposal searches without case sensitivity", () => {
@@ -21,6 +33,64 @@ describe("QuorumX frontend helpers", () => {
     expect(proposalMatchesSearch(proposal, "safedao")).toBe(true);
     expect(proposalMatchesSearch(proposal, "0xabcd")).toBe(true);
     expect(proposalMatchesSearch(proposal, "balancer")).toBe(false);
+  });
+
+  test("late Mirage success or error cannot replace the current Ember request", async () => {
+    let generation = 0, visible = "", error = "";
+    let releaseMirage;
+    const mirage = new Promise((resolve) => { releaseMirage = resolve; });
+    const run = async (result) => {
+      const requestGeneration = ++generation;
+      try {
+        const value = await result;
+        if (isCurrentRequest(generation, requestGeneration)) visible = value;
+      } catch (failure) {
+        if (isCurrentRequest(generation, requestGeneration)) error = failure.message;
+      }
+    };
+    const requestA = run(mirage);
+    await run(Promise.resolve("Ember"));
+    releaseMirage("Mirage");
+    await requestA;
+    expect({ visible, error }).toEqual({ visible: "Ember", error: "" });
+
+    let rejectLate;
+    const lateFailure = new Promise((resolve, reject) => { rejectLate = reject; });
+    const staleError = run(lateFailure);
+    await run(Promise.resolve("Ember remains"));
+    rejectLate(new Error("Mirage offline"));
+    await staleError;
+    expect({ visible, error }).toEqual({ visible: "Ember remains", error: "" });
+  });
+
+  test("reused pagination rows are de-duplicated by canonical identity", () => {
+    expect(mergeUniqueProposals(
+      [{ canonicalId: "Mirage", title: "old" }],
+      [{ canonicalId: "Mirage", title: "new" }, { canonicalId: "Ember", title: "Ember" }],
+    )).toEqual([{ canonicalId: "Mirage", title: "new" }, { canonicalId: "Ember", title: "Ember" }]);
+  });
+
+  test("uses bounded particle budgets for mobile, low-power, desktop, and reduced motion", () => {
+    expect(particleBudget(375, false, 8)).toEqual({ cloud: 0, logo: 0, fps: 0 });
+    expect(particleBudget(1280, false, 2)).toEqual({ cloud: 0, logo: 0, fps: 0 });
+    expect(particleBudget(1280, false, 8)).toEqual({ cloud: 2000, logo: 300, fps: 30 });
+    expect(particleBudget(1280, true, 8)).toEqual({ cloud: 0, logo: 0, fps: 0 });
+  });
+
+  test("ships stable accessible loading regions and the correct skip target", () => {
+    const html = readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+    expect(html).toContain('class="skip-link" href="#proposals">Skip to proposals</a>');
+    expect(html).toContain('id="proposals" tabindex="-1"');
+    expect(html).toContain('aria-labelledby="record-dialog-title"');
+    expect(html).toContain('id="record-loading" data-record-loading role="status" aria-live="polite"');
+    expect((html.match(/aria-busy="true"/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+
+  test("contains long Whimsy content and exposes record tabs at narrow widths", () => {
+    const css = readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+    expect(css).toMatch(/\.record-tabs[^}]*overflow-x: auto/);
+    expect(css).toMatch(/\.proposal-copy[^}]*overflow-wrap: anywhere/);
+    expect(css).toMatch(/:focus-visible \{ outline: 3px solid/);
   });
 
   test("calculates whole voting days remaining", () => {

@@ -5,14 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="QuorumX indexes public DAO proposals and publishes inspectable, consensus-backed governance due diligence.">
   <meta name="theme-color" content="#080806">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.quorumx.dev; style-src 'self'; script-src 'self'; img-src 'self' data: https://cdn.stamp.fyi; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: https://cdn.stamp.fyi; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
   <title>QuorumX — Governance due diligence</title>
   <link rel="canonical" href="https://quorumx.dev/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to proposals</a>
+  <a class="skip-link" href="#proposals">Skip to proposals</a>
   <header class="site-header" data-header>
     <a class="wordmark" href="#top" aria-label="QuorumX home">Quorum<span>X</span></a>
     <button class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false" data-nav-toggle><span></span><span></span></button>
@@ -42,11 +43,11 @@
     </section>
 
     <section class="attention section-shell" aria-labelledby="attention-title">
-      <header class="section-heading compact-heading"><div><p class="overline">Priority queue</p><h2 id="attention-title">Needs review now</h2></div><p>Active proposals with material findings, open questions, or an approaching voting deadline.</p></header>
-      <div class="attention-grid" data-attention><div class="loading-block" role="status">Loading current proposals…</div></div>
+      <header class="section-heading compact-heading"><div><p class="overline">Global priority queue</p><h2 id="attention-title">Needs review now</h2></div><p>Highest-priority active proposals across the complete matching index, ordered by accepted review priority with a deterministic newest-first tie-break.</p></header>
+      <p class="visually-hidden" data-attention-status role="status" aria-live="polite">Loading current proposals…</p><div class="attention-grid" data-attention aria-busy="true"><div class="loading-block">Loading current proposals…</div></div>
     </section>
 
-    <section class="proposal-section section-shell" id="proposals" aria-labelledby="proposal-title">
+    <section class="proposal-section section-shell" id="proposals" tabindex="-1" aria-labelledby="proposal-title" aria-busy="true">
       <header class="section-heading"><div><p class="overline">Living index</p><h2 id="proposal-title">Proposal index</h2></div><p>Real governance records from Snapshot, updated automatically. Open any row to inspect its source, proposer and latest assessment.</p></header>
       <form class="filter-bar" data-filter-form role="search">
         <label class="search-field"><span class="visually-hidden">Search proposals</span><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg><input type="search" placeholder="Search loaded proposals" data-search></label>
@@ -55,7 +56,7 @@
         <label><span class="visually-hidden">Assessment status</span><select data-filter-assessment><option value="">Any assessment</option><option value="finalized">Accepted</option><option value="submitted">Submitted</option><option value="unassessed">Not assessed</option></select></label>
         <button class="button button-ink" type="submit">Apply filters</button>
       </form>
-      <div class="index-status" aria-live="polite" data-index-status>Connecting to the public index…</div>
+      <div class="index-status" role="status" aria-live="polite" aria-atomic="true" data-index-status>Connecting to the public index…</div>
       <div class="proposal-table-wrap"><table class="proposal-table"><thead><tr><th>Proposal</th><th>DAO</th><th>Status</th><th>Review signal</th><th>Assessment</th><th>Voting ends</th><th><span class="visually-hidden">Open</span></th></tr></thead><tbody data-proposals><tr><td colspan="7"><div class="loading-block">Loading proposal index…</div></td></tr></tbody></table></div>
       <div class="mobile-proposals" data-mobile-proposals></div>
       <button class="load-more" type="button" data-load-more hidden>Load more proposals</button>
@@ -63,12 +64,12 @@
 
     <section class="assessments section-shell" id="assessments" aria-labelledby="assessment-title">
       <header class="section-heading"><div><p class="overline">Accepted records</p><h2 id="assessment-title">Due diligence</h2></div><p>Inspect findings, source evidence, unresolved questions, and GenLayer provenance. Earlier scoring records remain clearly labelled as legacy.</p></header>
-      <div class="assessment-list" data-assessments><div class="loading-block">Loading accepted assessments…</div></div>
+      <p class="visually-hidden" data-assessment-status role="status" aria-live="polite">Loading accepted assessments…</p><div class="assessment-list" data-assessments aria-busy="true"><div class="loading-block">Loading accepted assessments…</div></div>
     </section>
 
     <section class="dao-section section-shell" id="daos" aria-labelledby="dao-title">
       <header class="section-heading"><div><p class="overline">Source registry</p><h2 id="dao-title">DAO directory</h2></div><p>QuorumX indexes broadly but assesses selectively. Each source has explicit eligibility rules and a bounded daily assessment budget.</p></header>
-      <div class="dao-grid" data-daos><div class="loading-block">Loading DAO sources…</div></div>
+      <p class="visually-hidden" data-dao-status role="status" aria-live="polite">Loading DAO sources…</p><div class="dao-grid" data-daos aria-busy="true"><div class="loading-block">Loading DAO sources…</div></div>
     </section>
 
     <section class="method-section section-shell" id="methodology" aria-labelledby="method-title">
@@ -91,7 +92,7 @@
 
   <footer class="site-footer"><a class="wordmark" href="#top">Quorum<span>X</span></a><p>Public proposals. Verifiable assessments. Human judgment.</p><p>GenLayer Studionet · Development deployment</p></footer>
 
-  <dialog class="record-dialog" data-record-dialog aria-labelledby="record-title"><div class="dialog-shell"><button class="dialog-close" type="button" data-record-close aria-label="Close proposal">×</button><div class="record-loading" data-record-loading>Loading public record…</div><article class="public-record" data-public-record hidden><div class="record-hero"><p class="record-kicker" data-record-kicker></p><h2 id="record-title" data-record-title></h2><p data-record-intro></p></div><div class="record-layout"><div class="record-body"><nav class="record-tabs" aria-label="Proposal record sections"><a href="#record-overview">Overview</a><a href="#record-due-diligence">Due diligence</a><a href="#record-proposal">Original proposal</a><a href="#record-evidence">Evidence</a></nav><section id="record-overview"><h3>Overview</h3><dl class="record-facts" data-record-facts></dl></section><section id="record-due-diligence" data-due-diligence></section><section id="record-proposal"><h3>Original proposal</h3><div class="proposal-copy" data-record-body></div></section></div><aside class="evidence-margin" id="record-evidence" data-record-evidence></aside></div></article></div></dialog>
+  <dialog class="record-dialog" data-record-dialog aria-labelledby="record-dialog-title" aria-describedby="record-loading"><div class="dialog-shell"><h2 class="visually-hidden" id="record-dialog-title">Proposal public record</h2><button class="dialog-close" type="button" data-record-close aria-label="Close proposal">×</button><div class="record-loading" id="record-loading" data-record-loading role="status" aria-live="polite" aria-atomic="true" tabindex="-1">Loading public record…</div><article class="public-record" data-public-record hidden><div class="record-hero"><p class="record-kicker" data-record-kicker></p><h2 data-record-title></h2><p data-record-intro></p></div><div class="record-layout"><div class="record-body"><nav class="record-tabs" aria-label="Proposal record sections"><a href="#record-overview">Overview</a><a href="#record-due-diligence">Due diligence</a><a href="#record-proposal">Original proposal</a><a href="#record-evidence">Evidence</a></nav><section id="record-overview"><h3>Overview</h3><dl class="record-facts" data-record-facts></dl></section><section id="record-due-diligence" data-due-diligence></section><section id="record-proposal"><h3>Original proposal</h3><div class="proposal-copy" data-record-body></div></section></div><aside class="evidence-margin" id="record-evidence" data-record-evidence></aside></div></article></div></dialog>
 
   <dialog class="wallet-dialog" data-wallet-dialog aria-labelledby="wallet-title"><div class="wallet-panel"><button class="dialog-close" type="button" data-wallet-close aria-label="Close wallet dialog">×</button><p class="overline">Optional participation</p><h2 id="wallet-title">Connect only when it helps.</h2><p>QuorumX does not need your wallet to browse proposals or verify assessments. Connecting currently identifies your public account locally; it does not request a signature or transaction.</p><ul><li>No funds requested</li><li>No signature requested</li><li>No automatic network switch</li></ul><div class="wallet-actions"><button class="button button-gold" type="button" data-wallet-confirm>Connect browser wallet</button><button class="text-button" type="button" data-wallet-cancel>Continue without wallet</button></div><p class="wallet-feedback" aria-live="polite" data-wallet-feedback></p></div></dialog>
 </body>

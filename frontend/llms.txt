@@ -1,0 +1,10 @@
+# QuorumX
+
+QuorumX indexes public DAO governance proposals and publishes source-grounded due-diligence records.
+
+- Public proposal index: https://quorumx.dev/#proposals
+- Methodology: https://quorumx.dev/#methodology
+- Public API readiness: https://api.quorumx.dev/health/ready
+- Source repository: https://github.com/luch91/QuorumX
+
+Due-diligence records support human review and are not voting recommendations.
