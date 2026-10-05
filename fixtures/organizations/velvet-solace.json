@@ -1,0 +1,21 @@
+{
+  "displayName": "Velvet Solace",
+  "baseSlug": "velvet-solace",
+  "ownershipMarker": "quorumx-e2e",
+  "source": {
+    "kind": "snapshot",
+    "space": "velvet-solace.test"
+  },
+  "proposals": [
+    { "name": "Mirage", "fixtureId": "mirage", "purpose": "initial-content-a", "status": "active" },
+    { "name": "Ember", "fixtureId": "ember", "purpose": "revised-content-b", "status": "active" },
+    { "name": "Wanderlust", "fixtureId": "wanderlust", "purpose": "submission-recovery", "status": "active" },
+    { "name": "Eclipse", "fixtureId": "eclipse", "purpose": "six-safeguard-boundary", "status": "active" },
+    { "name": "Reverie", "fixtureId": "reverie", "purpose": "fair-queue-successor", "status": "active" },
+    { "name": "Serendipity", "fixtureId": "serendipity", "purpose": "paginated-search-target", "status": "closed" },
+    { "name": "Moonbeam", "fixtureId": "moonbeam", "purpose": "urgent-priority-target", "status": "active" },
+    { "name": "Whimsy", "fixtureId": "whimsy", "purpose": "hostile-long-content", "status": "active" },
+    { "name": "Afterglow", "fixtureId": "afterglow", "purpose": "immutable-v1-record", "status": "closed" },
+    { "name": "Halcyon", "fixtureId": "halcyon", "purpose": "known-good-v2-record", "status": "active" }
+  ]
+}
