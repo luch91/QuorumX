@@ -211,6 +211,7 @@ async function main() {
     return;
   }
   if (command === "provision") {
+    await mkdir(artifactRoot(), { recursive: true });
     await mkdir(runDirectory, { recursive: false });
     const provisioned = await provisionDatabase(runId, runDirectory, result);
     await writeFile(path.join(runDirectory, "manifest.redacted.json"), `${JSON.stringify(provisioned, null, 2)}\n`, { flag: "wx" });

@@ -33,6 +33,13 @@ describe("Velvet Solace disposable organization harness", () => {
     expect(JSON.stringify(manifest)).not.toMatch(/password|private.?key|admin.?token|connection.?string/i);
   });
 
+  it("creates a missing artifact root before provisioning a run", () => {
+    const source = readFileSync(script, "utf8");
+    expect(source).toContain("await mkdir(artifactRoot(), { recursive: true })");
+    expect(source.indexOf("await mkdir(artifactRoot(), { recursive: true })"))
+      .toBeLessThan(source.indexOf("await mkdir(runDirectory, { recursive: false })"));
+  });
+
   it.each(["../escape", "UPPER", "", "contains space"])("rejects unsafe run id %p", (runId) => {
     const result = run("manifest", "--run-id", runId);
     expect(result.status).not.toBe(0);
