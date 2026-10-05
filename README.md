@@ -155,19 +155,21 @@ Neon Postgres · proposals · immutable revisions · durable jobs · transaction
 GovernanceRiskOracle on GenLayer
 ```
 
-`GET /health` exercises the deployed Worker, Hyperdrive, and Neon database together. Atomic `FOR UPDATE SKIP LOCKED` claiming and stale-lock recovery prevent concurrent cron invocations from processing the same job. Contract state is accepted only when its proposal key and validator-agreed content hash match the indexed revision. The runtime database role is SQL-managed and intentionally lacks `DELETE`, schema ownership, DDL, and Neon's broad `neon_superuser` membership.
+`GET /health/live` is a shallow process check. `GET /health/ready` (and the compatibility alias `GET /health`) exercises the Worker, Hyperdrive, and database and reports source freshness, queue age, dead-letter/quarantine count, plus version/config/schema attestations. Atomic `FOR UPDATE SKIP LOCKED` claiming and stale-lock recovery prevent concurrent cron invocations from processing the same job. Contract state is accepted only when its proposal key and validator-agreed content hash match the indexed revision. The runtime database role is SQL-managed and intentionally lacks `DELETE`, schema ownership, DDL, and Neon's broad `neon_superuser` membership.
 
 ### Public API
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /health` | Database reachability plus indexer counts and last successful poll |
+| `GET /health/live` | Shallow, bounded Worker liveness; no dependency calls |
+| `GET /health/ready` | Database, source freshness, queue health, and deployment attestations |
+| `GET /health` | Compatibility alias for readiness |
 | `GET /v1/sources` | DAO metadata, ecosystems, assessment budgets, polling health, and bounded error state |
 | `GET /v1/proposals?status=active&ecosystem=ethereum` | Cursor-paginated proposal feed with latest assessment state |
 | `GET /v1/proposals/<canonical-id>` | Proposal body, revision, transaction, and accepted assessment details |
 | `GET /v1/assessments/<proposal-key>` | Accepted assessment and GenLayer provenance |
 
-Proposal lists accept `status`, `space`, exact `source`, human-facing `dao`, proposer `author`, `assessment`, and `ecosystem` filters. Use `assessment=unassessed` for indexed proposals without a job. Lists also accept `limit` (maximum 100) and the numeric `cursor` returned as `page.nextCursor`. Reads require no wallet or API key. The internal cycle endpoint is bearer-protected; normal ingestion is cron-driven.
+Proposal lists accept `status`, `space`, exact `source`, human-facing `dao`, proposer `author`, `assessment`, and `ecosystem` filters. Use `assessment=unassessed` for indexed proposals without a job. `q` searches the complete filtered dataset by title, canonical/source identifier, DAO/space, exact author, or exact transaction hash. `sort=priority` globally orders accepted v2 review priorities (`urgent`, `high`, `normal`, `low`, unassessed), then newest database ID as the deterministic tie-breaker. Lists accept `limit` (maximum 100) and an opaque, filter-bound `page.nextCursor`; malformed or reused cursors fail with `invalid_cursor`. Rows inserted after page one have larger IDs and are excluded from the remainder of that traversal, giving stable snapshot-like pagination without duplicates. `page.scope=all_matching_proposals` means an empty result is authoritative for the supplied filters. Anonymous successful reads use a 15-second public cache with 30-second stale revalidation; errors, health, and `/internal/*` are `no-store`. Every API response includes `x-correlation-id`. Reads require no wallet or API key. The internal cycle endpoint is bearer-protected; normal ingestion is cron-driven.
 
 ### Public interface
 
@@ -240,6 +242,10 @@ npm ci
 npm run verify
 ```
 
+`npm run verify` builds the operator clients and executes a post-build CLI
+smoke, so a green verification proves that every documented compiled entry
+point exists and the primary CLI starts.
+
 ```bash
 npm run quorumx -- sources check --json
 npm run quorumx -- proposals list --json
@@ -247,6 +253,34 @@ npm run quorumx -- assessment get \
   snapshot:balancer.eth:0x25ee897681ae8bbae5ae224b14ad6a03ea6920f768d52b2e9aa1a85b7eec0590 \
   --json
 ```
+
+### Disposable integration organization
+
+The local integration workflow uses the run-scoped **Velvet Solace** fixture.
+It starts an isolated `postgres:16-alpine` container, applies the real
+migrations, seeds ten named proposals, verifies the data as
+`quorumx_runtime`, and removes the exact run-scoped container and artifacts.
+It never uses production credentials or makes a GenLayer write.
+
+Docker must be running. Execute the database provision/verify/teardown test:
+
+```bash
+npm run test:organization:e2e
+```
+
+For manual inspection, generate a run ID in the documented form and use the
+individual commands. Always pass the same ID to teardown:
+
+```bash
+node scripts/velvet_solace.cjs provision --run-id 20261005t120000z-ab12cd
+node scripts/velvet_solace.cjs verify --run-id 20261005t120000z-ab12cd
+node scripts/velvet_solace.cjs teardown --run-id 20261005t120000z-ab12cd
+node scripts/velvet_solace.cjs verify-clean --run-id 20261005t120000z-ab12cd
+```
+
+The emitted manifest is redacted. Database credentials remain only in the
+ignored run directory and are destroyed by teardown. Failed provisioning
+also removes its container and run directory.
 
 Read-only live probe:
 
@@ -273,6 +307,13 @@ QUORUMX_GENLAYER_PRIVATE_KEY=0x...
 ```bash
 npm run quorumx -- assess --source snapshot --proposal <snapshot-proposal-id> --json
 ```
+
+The proposal value may be a bare proposal ID (using the first configured
+space), `space:id`, `snapshot:space:id`, or a canonical `snapshot.org` /
+`snapshot.box` proposal URL. The CLI retrieves that proposal directly rather
+than scanning the first active page. Unsupported sources fail before network
+or signing work. A signing key is checked only if the workflow reaches a new
+submission; read-only commands and existing-state reads need no key.
 
 Existing state is checked first. An assessed proposal returns without another transaction. New transaction evidence is recorded before polling so an interrupted workflow can recover without a second write.
 
@@ -386,3 +427,6 @@ wrangler.site.jsonc    web assets, custom domains, and observability
 QuorumX evolved through a hybrid migration from Cassandra/Sentinel. The paid Telegraph workflow is isolated behind `npm run legacy:telegraph`; it is never an automatic fallback and is not authoritative. Optional DWCS research is also outside the GenLayer consensus path.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). QuorumX is licensed under [Apache License 2.0](LICENSE); the license does not grant rights to the QuorumX name or marks.
+
+Operators should also follow the [operations runbook](docs/OPERATIONS.md) and
+[release checklist](docs/RELEASE_CHECKLIST.md).

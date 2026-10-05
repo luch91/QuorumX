@@ -56,12 +56,82 @@ jobs:
             if [ "$status" -eq 0 ]; then
               continue
             fi
-            if printf '%s' "$output" | grep -q 'E101.*HTTP Error 404'; then
+            if printf '%s' "$output" | node scripts/verify_semantic_lint.cjs; then
               echo "::warning::genvm-linter semantic validation for $contract is blocked by upstream GenVM release asset 404; static lint passed."
               continue
             fi
             exit "$status"
           done
+
+  real-workflow:
+    name: Postgres, Workers runtime, and browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Allocate isolated Velvet Solace run
+        shell: bash
+        run: echo "QUORUMX_RUN_ID=$(date -u +%Y%m%dt%H%M%Sz)-ci${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+      - name: Provision and verify migrations and privileges
+        run: npm run test:organization:provision -- --run-id "$QUORUMX_RUN_ID"
+      - name: Real Postgres concurrency and recovery workflow
+        run: npm run test:organization:e2e -- --run-id "$QUORUMX_RUN_ID"
+      - name: Actual Workers runtime, routes, headers, and browser workflow
+        run: npm run test:organization:runtime -- --run-id "$QUORUMX_RUN_ID"
+      - name: Teardown and prove absence
+        if: always()
+        run: npm run test:organization:teardown -- --run-id "$QUORUMX_RUN_ID"
+      - name: Upload redacted failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: velvet-solace-${{ env.QUORUMX_RUN_ID }}
+          path: .quorumx-e2e/${{ env.QUORUMX_RUN_ID }}/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  rust-wasm:
+    name: Rust scorer and WASM boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: wasm32-unknown-unknown
+      - run: npm ci
+      - run: cargo test --manifest-path dwcs/rust-module/Cargo.toml
+      - run: npm run build:wasm
+      - run: cargo install wasm-tools --version 1.239.0 --locked
+      - run: wasm-tools validate dwcs/rust-module/target/wasm32-unknown-unknown/release/dwcs_scoring_module.wasm
+      - run: npm run validate:wasm
+      - run: npm run validate:v2:fixture
+
+  deployment-config:
+    name: Worker configuration dry-runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run cf:types
+      - run: npm run typecheck:worker
+      - run: npm run cf:dry-run:api
+      - run: npm run cf:dry-run:site
 
   secrets:
     name: Secret scan

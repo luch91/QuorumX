@@ -25,6 +25,9 @@ Set `DATABASE_URL` to the runtime-role connection only for the command invocatio
 npm run db:verify
 ```
 
-Successful output after migration 0006 reports eight tables, `schema_usage: true`,
-`proposal_rw: true`, `due_diligence_rw: true`, and both delete privileges `false`.
-Migration 0006 keeps v1 assessments intact and adds revision-bound v2 records.
+Successful output after migration `0010_runtime_privilege_matrix.sql` reports 12
+tables, `schema_usage: true`, `proposal_rw: true`,
+`due_diligence_rw: true`, both delete privileges `false`, no accepted-record
+mutation privilege, no schema creation, and no unsafe role membership. Migration
+0006 keeps v1 assessments intact; migrations 0007-0010 add immutable observation,
+acceptance, recovery, audit, and runtime-privilege invariants.

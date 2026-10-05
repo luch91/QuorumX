@@ -14,6 +14,8 @@ __pycache__/
 data/
 .sentinel-evidence/
 .quorumx-evidence/
+.quorumx-e2e/
+artifacts/remediation/
 
 # Locally generated receipt and request evidence. These may contain real
 # on-chain identifiers and must be exported deliberately, never committed.
@@ -40,6 +42,16 @@ dwcs/canaries/dataset.jsonl
 # control on purpose, only README.md files are meant to be public-facing
 # and tracked. See decision D11 in docs/PROJECT_SPEC.md.
 *.md
+!README.md
+!CONTRIBUTING.md
+!SECURITY.md
+!app/README.md
+!contracts/README.md
+!database/README.md
+!dwcs/**/*.md
+!workers/**/*.md
+!docs/**/*.md
+docs/superpowers/
 !README.md
 !**/README.md
 !.github/**/*.md
