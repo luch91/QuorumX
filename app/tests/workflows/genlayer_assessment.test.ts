@@ -1,4 +1,4 @@
-import { assessmentIdempotencyKey, resumeGenLayerAssessment, runGenLayerAssessment } from "../../src/workflows/genlayer_assessment";
+import { assessmentContentHash, assessmentIdempotencyKey, resumeGenLayerAssessment, runGenLayerAssessment } from "../../src/workflows/genlayer_assessment";
 import type { GovernanceProposal } from "../../src/domain/governance_proposal";
 import type { GenLayerGateway } from "../../src/genlayer/gateway";
 import type { TransactionEvidenceRecord, TransactionEvidenceStore } from "../../src/genlayer/transaction_evidence";
@@ -24,6 +24,62 @@ describe("GenLayer assessment workflow", () => {
 
   it("uses a deterministic idempotency key", () => {
     expect(assessmentIdempotencyKey(proposal)).toBe(assessmentIdempotencyKey({ ...proposal }));
+  });
+
+  it("matches the Python contract content hash for Snapshot material", () => {
+    expect(assessmentContentHash({
+      ...proposal,
+      canonicalId: "snapshot:velvet-solace.test:p1",
+      source: { kind: "snapshot", space: "velvet-solace.test", proposalId: "p1" },
+    })).toBe("a015f38adc11098f119be10871c46356a7356de2b9167618e22a3bdf5f287d7c");
+  });
+
+  it("reuses an accepted assessment only when its content hash matches", async () => {
+    const matching = gateway({ getAssessment: jest.fn().mockResolvedValue({
+      assessmentVersion: "1", proposalKey: proposal.canonicalId, sourceLocatorHash: "a".repeat(64),
+      contentHash: assessmentContentHash(proposal), riskLevel: "low", riskScore: 10,
+      riskCategories: ["governance"], recommendation: "allow", summary: "Current",
+      assessedAt: "2026-09-28T00:00:00Z", consensusState: "accepted", provenance: "fixture",
+    }) });
+    const result = await runGenLayerAssessment({}, {
+      source: { findEligible: async () => ({ proposal, attempts: [] }) }, gateway: matching,
+      evidence: evidenceStore().store, now: () => new Date("2026-09-28T00:00:00Z"),
+    });
+    expect(result.transaction?.transactionId).toBe("existing");
+    expect(matching.submitAssessment).not.toHaveBeenCalled();
+  });
+
+  it("does not present a stale accepted assessment as current", async () => {
+    const stale = gateway({ getAssessment: jest.fn().mockResolvedValue({
+      assessmentVersion: "1", proposalKey: proposal.canonicalId, sourceLocatorHash: "a".repeat(64), contentHash: "b".repeat(64),
+      riskLevel: "low", riskScore: 10, riskCategories: ["governance"], recommendation: "allow",
+      summary: "Stale", assessedAt: "2026-09-27T00:00:00Z", consensusState: "accepted", provenance: "fixture",
+    }) });
+    const result = await runGenLayerAssessment({}, {
+      source: { findEligible: async () => ({ proposal, attempts: [] }) }, gateway: stale,
+      evidence: evidenceStore().store, now: () => new Date("2026-09-28T00:00:00Z"),
+    });
+    expect(result.transaction?.transactionId).toBe("0xtx");
+    expect(stale.submitAssessment).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["wrong proposal identity", { proposalKey: "fixture:ember" }],
+    ["wrong assessment version", { assessmentVersion: "2" }],
+    ["unreadable provenance", { provenance: "unknown" }],
+  ])("does not reuse an assessment with %s", async (_label, override) => {
+    const candidate = gateway({ getAssessment: jest.fn().mockResolvedValue({
+      assessmentVersion: "1", proposalKey: proposal.canonicalId, sourceLocatorHash: "a".repeat(64),
+      contentHash: assessmentContentHash(proposal), riskLevel: "low", riskScore: 10,
+      riskCategories: ["governance"], recommendation: "allow", summary: "Candidate",
+      assessedAt: "2026-09-28T00:00:00Z", consensusState: "accepted", provenance: "fixture",
+      ...override,
+    }) });
+    await runGenLayerAssessment({}, {
+      source: { findEligible: async () => ({ proposal, attempts: [] }) }, gateway: candidate,
+      evidence: evidenceStore().store, now: () => new Date("2026-09-28T00:00:00Z"),
+    });
+    expect(candidate.submitAssessment).toHaveBeenCalledTimes(1);
   });
 
   it("records submission before waiting and keeps fixture provenance", async () => {

@@ -5,6 +5,7 @@ export type RiskRecommendation = "allow" | "manual_review" | "block";
 export type AssessmentConsensusState = "submitted" | "accepted" | "undetermined" | "reverted" | "failed_source";
 
 export interface GovernanceRiskAssessment {
+  assessmentVersion: "1";
   proposalKey: string;
   sourceLocatorHash: string;
   contentHash: string;
@@ -48,6 +49,7 @@ export function assertGovernanceRiskAssessment(value: unknown): asserts value is
   }
   if (
     typeof assessment.proposalKey !== "string" ||
+    assessment.assessmentVersion !== "1" ||
     typeof assessment.sourceLocatorHash !== "string" ||
     typeof assessment.contentHash !== "string" ||
     typeof assessment.summary !== "string" ||

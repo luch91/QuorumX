@@ -19,6 +19,28 @@ function provenance(proposal: GovernanceProposal): ProposalProvenance {
   return proposal.source.kind === "fixture" ? "fixture" : "live";
 }
 
+function contractCanonicalJson(value: unknown): string {
+  const normalized = value && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, entry && typeof entry === "object" ? JSON.parse(contractCanonicalJson(entry)) : entry]))
+    : value;
+  return JSON.stringify(normalized).replace(/[^\x20-\x7e]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+export function assessmentContentHash(proposal: GovernanceProposal): string {
+  const material = proposal.source.kind === "snapshot"
+    ? contractCanonicalJson({
+      id: proposal.source.proposalId,
+      space: proposal.source.space,
+      title: proposal.title,
+      body: proposal.bodyText,
+      choices: proposal.choices,
+      state: proposal.status,
+    })
+    : proposal.bodyText;
+  return createHash("sha256").update(material).digest("hex");
+}
+
 export function assessmentIdempotencyKey(proposal: GovernanceProposal): string {
   const content = JSON.stringify({ source: proposal.source, title: proposal.title.trim(), bodyText: proposal.bodyText.trim(), choices: proposal.choices });
   return createHash("sha256").update(content).digest("hex");
@@ -41,7 +63,11 @@ export async function runGenLayerAssessment(
     return { attempts: selection.attempts, reason: "deadline" };
   }
   const existing = await dependencies.gateway.getAssessment(proposal.canonicalId);
-  if (existing) {
+  if (existing?.assessmentVersion === "1"
+    && existing.proposalKey === proposal.canonicalId
+    && existing.contentHash === assessmentContentHash(proposal)
+    && existing.consensusState === "accepted"
+    && (existing.provenance === "live" || existing.provenance === "fixture")) {
     return { attempts: selection.attempts, transaction: { transactionId: "existing", proposalKey: proposal.canonicalId, state: "accepted", assessment: existing } };
   }
   const transactionId = await dependencies.gateway.submitAssessment(proposal.source, assessmentIdempotencyKey(proposal));

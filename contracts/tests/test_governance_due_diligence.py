@@ -21,6 +21,13 @@ def load_module():
 
 
 class DueDiligenceRulesTest(unittest.TestCase):
+    def test_shared_v2_conformance_manifest_matches_contract_policy(self):
+        path = pathlib.Path(__file__).parents[2] / "fixtures" / "contracts" / "v2" / "conformance.json"
+        conformance = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(conformance["schemaVersion"], "2")
+        self.assertEqual(conformance["unknownFieldPolicy"], "reject")
+        self.assertEqual(conformance["recordMaxUtf8Bytes"], self.module.MAX_RECORD_BYTES)
+        self.assertEqual(next(case for case in conformance["cases"] if case["name"] == "eclipse")["existingSafeguards"], 6)
     @classmethod
     def setUpClass(cls):
         cls.module = load_module()
@@ -314,7 +321,8 @@ class DueDiligenceRulesTest(unittest.TestCase):
         self.module.gl.eq_principle = types.SimpleNamespace(strict_eq=lambda fn: "Revoke the vault role.")
         contract = self.module.GovernanceDueDiligence()
         with self.assertRaises(ValueError):
-            contract.assess(json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "p1"}), "reject-1")
+            contract.assess(json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "p1"}),
+                            "qx:v2:" + self.module.sha256_text("Revoke the vault role."))
         self.assertEqual(contract.assessments, {})
         self.assertEqual(contract.idempotency, {})
 
@@ -434,14 +442,32 @@ class DueDiligenceRulesTest(unittest.TestCase):
         self.module.gl.message_raw = {"datetime": "2026-10-03T00:00:00Z"}
         contract = self.module.GovernanceDueDiligence()
         source = json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "p1"})
-        first = contract.assess(source, "revision-1")
+        first_key = "qx:v2:" + self.module.sha256_text(material[0])
+        first = contract.assess(source, first_key)
         material[0] = "Transfer 6M ARB from the treasury."
-        self.assertEqual(contract.assess(source, "revision-1"), first)
-        second = contract.assess(source, "revision-2")
+        self.assertEqual(contract.assess(source, first_key), first)
+        second = contract.assess(source, "qx:v2:" + self.module.sha256_text(material[0]))
         self.assertNotEqual(first, second)
         key = "snapshot:dao.eth:p1"
         self.assertEqual(contract.get_assessment_for_revision(key, self.module.sha256_text("Transfer 5M ARB from the treasury.")), first)
         self.assertEqual(contract.get_assessment(key), second)
+
+    def test_ember_cannot_preclaim_mirage_derived_idempotency_identity(self):
+        material = ["Ember content"]
+        class Return:
+            def __init__(self, value): self.calldata = value
+        self.module.gl.vm = types.SimpleNamespace(UserError=ValueError, Return=Return,
+            run_nondet_unsafe=lambda leader, validator: leader())
+        self.module.gl.eq_principle = types.SimpleNamespace(strict_eq=lambda fn: material[0])
+        self.module.gl.nondet = types.SimpleNamespace(exec_prompt=lambda *args, **kwargs: {
+            "actions": [{"passageId": "p1", "kind": "other", "reversible": "unknown"}], "claims": []})
+        self.module.gl.message_raw = {"datetime": "2026-10-05T00:00:00Z"}
+        contract = self.module.GovernanceDueDiligence()
+        mirage_key = "qx:v2:" + self.module.sha256_text("Mirage content")
+        ember = json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "ember"})
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            contract.assess(ember, mirage_key)
+        self.assertEqual(contract.idempotency, {})
 
     def test_contract_commits_only_source_validated_material_facts(self):
         material = "Transfer 5M ARB from the treasury."
@@ -461,7 +487,8 @@ class DueDiligenceRulesTest(unittest.TestCase):
         self.module.gl.eq_principle = types.SimpleNamespace(strict_eq=lambda fn: material)
         self.module.gl.message_raw = {"datetime": "2026-10-03T00:00:00Z"}
         contract = self.module.GovernanceDueDiligence()
-        record = json.loads(contract.assess(json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "p1"}), "canonical-1"))
+        record = json.loads(contract.assess(json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "p1"}),
+                                            "qx:v2:" + self.module.sha256_text(material)))
         self.assertEqual(record["findings"][0]["evidence"], ["proposal"])
         self.assertEqual(record["evidence"][0]["contentHash"], self.module.sha256_text(material))
         self.assertEqual(len(captured), 1)
@@ -479,7 +506,8 @@ class DueDiligenceRulesTest(unittest.TestCase):
         self.module.gl.nondet = types.SimpleNamespace(exec_prompt=lambda prompt, response_format: captured.append(prompt) or ({"actions": [{"passageId": "p1", "kind": "treasury_transfer", "reversible": "unknown"}], "claims": []} if "Extract material actions" in prompt else {"accept": True}))
         self.module.gl.message_raw = {"datetime": "2026-10-03T00:00:00Z"}
         contract = self.module.GovernanceDueDiligence()
-        record = json.loads(contract.assess(json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "p1"}), "injection-1"))
+        record = json.loads(contract.assess(json.dumps({"kind": "snapshot", "space": "dao.eth", "proposalId": "p1"}),
+                                            "qx:v2:" + self.module.sha256_text(body)))
         self.assertIn("untrusted", captured[0])
         self.assertIn("SYSTEM OVERRIDE", captured[0])
         self.assertEqual(record["materialClaims"], [])

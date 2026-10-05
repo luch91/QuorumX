@@ -38,12 +38,23 @@ describe("due diligence v2 boundary", () => {
     await claimAssessmentJob(client as never, "worker-a", "1");
     expect(client.query).toHaveBeenCalledWith(expect.stringContaining("candidate.assessment_version = $2"),
       ["worker-a", "1"]);
+    const sql = jest.mocked(client.query).mock.calls[0][0] as string;
+    expect(sql).toContain("lease_expires_at");
+    expect(sql).toContain("next_poll_at");
+    expect(sql).toContain("attempt_count asc");
   });
   it("parses a bounded finding with proposal evidence and counts claim statuses", () => {
     const parsed = parseDueDiligence(JSON.stringify(report()), key);
     expect(parsed?.reviewPriority).toBe("high");
     expect(parsed?.findings[0].evidence).toEqual(["e1"]);
     expect(claimStatusCounts(parsed!.materialClaims)).toMatchObject({ unverified: 1, supported: 0 });
+  });
+
+  it("accepts the contract maximum of six existing safeguards", () => {
+    const eclipse = report();
+    eclipse.proposalKey = "snapshot:velvet-solace.test:eclipse";
+    eclipse.findings[0].existingSafeguards = Array.from({ length: 6 }, (_, index) => `Safeguard ${index + 1}`);
+    expect(parseDueDiligence(eclipse, eclipse.proposalKey)?.findings[0].existingSafeguards).toHaveLength(6);
   });
 
   it("rejects fabricated authority, unsupported external claims and false priority", () => {
@@ -56,6 +67,17 @@ describe("due diligence v2 boundary", () => {
     const badPriority = report();
     badPriority.reviewPriority = "low";
     expect(() => parseDueDiligence(badPriority, key)).toThrow("review priority");
+  });
+
+  it("rejects unknown fields with the stable boundary category", () => {
+    const future = { ...report(), futureField: true };
+    try {
+      parseDueDiligence(future, key);
+      throw new Error("expected rejection");
+    } catch (error) {
+      expect(error).toMatchObject({ category: "invalid_v2_contract_record" });
+      expect((error as Error).message).not.toContain(JSON.stringify(future));
+    }
   });
 
   it("detects concrete revision changes without naming an unverified recipient", () => {

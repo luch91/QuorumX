@@ -52,6 +52,7 @@ export class GenLayerGatewayImpl implements GenLayerGateway {
     if (raw === "" || raw === undefined || raw === null) return undefined;
     const record = typeof raw === "string" ? JSON.parse(raw) as Record<string, unknown> : raw as Record<string, unknown>;
     const assessment: GovernanceRiskAssessment = {
+      assessmentVersion: "1",
       proposalKey: String(record.proposal_key),
       sourceLocatorHash: String(record.locator_hash),
       contentHash: String(record.content_hash),

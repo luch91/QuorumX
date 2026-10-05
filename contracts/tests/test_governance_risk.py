@@ -71,6 +71,8 @@ class GovernanceRiskRulesTest(unittest.TestCase):
         self.assertEqual(self.module.proposal_key(normalized), "snapshot:gen.eth:p-1")
         with self.assertRaises(ValueError):
             self.module.parse_source(json.dumps({"kind": "public_url", "url": "http://example.com"}))
+        with self.assertRaisesRegex(ValueError, "Snapshot"):
+            self.module.parse_source(json.dumps({"kind": "public_url", "url": "https://example.com/proposal"}))
         with self.assertRaises(ValueError):
             self.module.parse_source("not-json")
 
@@ -78,6 +80,43 @@ class GovernanceRiskRulesTest(unittest.TestCase):
         self.module.validate_idempotency_key("run-2026-09-28")
         with self.assertRaises(ValueError):
             self.module.validate_idempotency_key("x" * 129)
+
+    def configure_contract_runtime(self, material):
+        current = [material]
+        prompt_calls = []
+        self.module.gl.eq_principle = types.SimpleNamespace(
+            strict_eq=lambda fn: current[0],
+            prompt_non_comparative=lambda fn, **kwargs: prompt_calls.append(fn()) or {
+                "risk_level": "low", "score": 10, "categories": ["governance"],
+                "recommendation": "allow", "summary": "Accepted fixture",
+            },
+        )
+        self.module.gl.message_raw = {"datetime": "2026-10-05T12:00:00Z"}
+        self.module.gl.vm = types.SimpleNamespace(UserError=ValueError)
+        return current, prompt_calls
+
+    def test_old_idempotency_key_returns_its_immutable_afterglow_revision(self):
+        source = json.dumps({"kind": "snapshot", "space": "velvet.eth", "proposalId": "afterglow"})
+        current, _ = self.configure_contract_runtime("Afterglow revision A")
+        contract = self.module.GovernanceRiskOracle()
+        revision_a = contract.assess(source, "afterglow-a")
+        current[0] = "Afterglow revision B"
+        revision_b = contract.assess(source, "afterglow-b")
+
+        self.assertNotEqual(json.loads(revision_a)["content_hash"], json.loads(revision_b)["content_hash"])
+        self.assertEqual(contract.assess(source, "afterglow-a"), revision_a)
+        self.assertEqual(contract.get_assessment("snapshot:velvet.eth:afterglow"), revision_b)
+
+    def test_oversized_v1_material_is_rejected_before_assessment(self):
+        source = json.dumps({"kind": "snapshot", "space": "velvet.eth", "proposalId": "whimsy"})
+        _, prompt_calls = self.configure_contract_runtime("x" * 24001)
+        contract = self.module.GovernanceRiskOracle()
+
+        with self.assertRaisesRegex(ValueError, "exceeds governance-risk limit"):
+            contract.assess(source, "whimsy-large")
+        self.assertEqual(prompt_calls, [])
+        self.assertEqual(contract.assessments, {})
+        self.assertEqual(contract.idempotency, {})
 
 
 if __name__ == "__main__":

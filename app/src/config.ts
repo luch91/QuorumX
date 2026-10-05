@@ -88,3 +88,9 @@ export function loadGenLayerConfig(env: NodeJS.ProcessEnv = process.env): GenLay
     ...(privateKey ? { privateKey: privateKey as `0x${string}` } : {}),
   };
 }
+
+export function loadGenLayerReadConfig(env: NodeJS.ProcessEnv = process.env): GenLayerConfig {
+  const readOnlyEnv = { ...env };
+  delete readOnlyEnv.QUORUMX_GENLAYER_PRIVATE_KEY;
+  return loadGenLayerConfig(readOnlyEnv);
+}

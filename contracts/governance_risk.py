@@ -3,9 +3,8 @@
 
 from genlayer import *
 import hashlib
-import ipaddress
 import json
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 
 RISK_LEVELS = ("low", "medium", "high")
@@ -33,23 +32,6 @@ def _required_string(value, name: str, maximum: int = 512) -> str:
     return value.strip()
 
 
-def _validate_public_https(url: str) -> str:
-    parsed = urlparse(_required_string(url, "url", 2048))
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("source URL must be public HTTPS")
-    host = parsed.hostname.lower()
-    if host == "localhost" or host.endswith(".localhost"):
-        raise ValueError("source URL must be public HTTPS")
-    try:
-        address = ipaddress.ip_address(host.strip("[]"))
-        if not address.is_global:
-            raise ValueError("source URL must be public HTTPS")
-    except ValueError as error:
-        if "public HTTPS" in str(error):
-            raise
-    return url
-
-
 def parse_source(source_json: str):
     if not isinstance(source_json, str) or len(source_json) > MAX_SOURCE_LENGTH:
         raise ValueError("invalid source JSON")
@@ -63,21 +45,13 @@ def parse_source(source_json: str):
     if kind == "snapshot":
         return {"kind": kind, "space": _required_string(source.get("space"), "space"),
                 "proposalId": _required_string(source.get("proposalId"), "proposalId")}
-    if kind == "public_url":
-        return {"kind": kind, "url": _validate_public_https(source.get("url"))}
-    if kind == "fixture":
-        return {"kind": kind,
-                "fixtureId": _required_string(source.get("fixtureId"), "fixtureId"),
-                "canonicalUrl": _validate_public_https(source.get("canonicalUrl"))}
-    raise ValueError("unsupported source kind")
+    raise ValueError("deployed v1 requires a canonical Snapshot source")
 
 
 def proposal_key(source) -> str:
     if source["kind"] == "snapshot":
         return f"snapshot:{source['space']}:{source['proposalId']}"
-    if source["kind"] == "public_url":
-        return "public_url:" + sha256_text(source["url"])
-    return f"fixture:{source['fixtureId']}"
+    raise ValueError("deployed v1 requires a canonical Snapshot source")
 
 
 def validate_idempotency_key(value: str) -> str:
@@ -138,8 +112,7 @@ def _fetch_material(source) -> str:
             "title": proposal.get("title", ""), "body": proposal.get("body", ""),
             "choices": proposal.get("choices", []), "state": proposal.get("state", ""),
         })
-    url = source.get("url", source.get("canonicalUrl"))
-    return _response_text(gl.nondet.web.get(url))
+    raise gl.vm.UserError("deployed v1 requires a canonical Snapshot source")
 
 
 def parse_assessment_output(value):
@@ -171,7 +144,10 @@ class GovernanceRiskOracle(gl.Contract):
         idem = validate_idempotency_key(idempotency_key)
         existing_key = self.idempotency.get(idem, "")
         if existing_key:
-            if existing_key != key:
+            if existing_key == key:
+                # Compatibility with records written by the original v1 layout.
+                return self.assessments.get(existing_key, "")
+            if not existing_key.startswith(key + ":"):
                 raise gl.vm.UserError("idempotency key already used for another proposal")
             return self.assessments.get(existing_key, "")
 
@@ -181,7 +157,9 @@ class GovernanceRiskOracle(gl.Contract):
             return _fetch_material(json.loads(source_memory))
 
         material = gl.eq_principle.strict_eq(fetch_material)
-        material_memory = material[:24000]
+        if len(material) > 24000:
+            raise gl.vm.UserError("Proposal material exceeds governance-risk limit")
+        material_memory = material
 
         def assessment_input():
             return material_memory
@@ -211,6 +189,8 @@ class GovernanceRiskOracle(gl.Contract):
             "locator_hash": sha256_text(canonical_json(source)),
             "assessed_at": gl.message_raw["datetime"],
         })
+        revision_key = key + ":" + bounded["content_hash"]
+        self.assessments[revision_key] = record
         self.assessments[key] = record
-        self.idempotency[idem] = key
+        self.idempotency[idem] = revision_key
         return record

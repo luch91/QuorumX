@@ -11,9 +11,22 @@ const SEVERITIES = new Set(["informational", "low", "medium", "high", "critical"
 const CONFIDENCES = new Set(["low", "medium", "high"]);
 const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
 
+export class DueDiligenceBoundaryError extends Error {
+  readonly category = "invalid_v2_contract_record";
+}
+
+function invalid(message: string): never {
+  throw new DueDiligenceBoundaryError(message);
+}
+
 function object(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid v2 ${field}`);
   return value as Record<string, unknown>;
+}
+
+function exactKeys(value: Record<string, unknown>, field: string, allowed: string[]): void {
+  const extras = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (extras.length) invalid(`Invalid v2 ${field}: unknown field`);
 }
 
 function string(value: unknown, field: string, max = 400, optional = false): string {
@@ -41,10 +54,15 @@ function derivedPriority(findings: StoredDueDiligenceAssessment["findings"], que
   return "low";
 }
 
-export function parseDueDiligence(raw: unknown, proposalKey: string): StoredDueDiligenceAssessment | undefined {
+function parseDueDiligenceRecord(raw: unknown, proposalKey: string): StoredDueDiligenceAssessment | undefined {
   if (raw === "" || raw === null || raw === undefined) return undefined;
-  const record = object(typeof raw === "string" ? JSON.parse(raw) : raw, "record");
-  if (JSON.stringify(record).length > 25_000 || record.assessmentVersion !== "2" || record.proposalKey !== proposalKey) {
+  let decoded: unknown;
+  try { decoded = typeof raw === "string" ? JSON.parse(raw) : raw; } catch { invalid("Invalid v2 record encoding"); }
+  const record = object(decoded, "record");
+  exactKeys(record, "record", ["assessmentVersion", "proposalKey", "contentHash", "sourceLocatorHash", "overview",
+    "evidence", "materialClaims", "findings", "executionMap", "unresolvedQuestions", "reviewPriority",
+    "reviewPriorityExplanation", "assessedAt", "provenance", "consensus"]);
+  if (new TextEncoder().encode(JSON.stringify(record)).length > 22_000 || record.assessmentVersion !== "2" || record.proposalKey !== proposalKey) {
     throw new Error("Invalid v2 assessment identity or size");
   }
   if (typeof record.contentHash !== "string" || !HASH.test(record.contentHash)
@@ -52,11 +70,11 @@ export function parseDueDiligence(raw: unknown, proposalKey: string): StoredDueD
     throw new Error("Invalid v2 assessment hashes");
   }
   const overview = object(record.overview, "overview");
-  string(overview.purpose, "overview purpose");
-  if (!stringList(overview.requestedActions, "requested actions", 8).length) throw new Error("Missing v2 action");
-  stringList(overview.assetsAffected, "assets", 6);
-  stringList(overview.permissionsChanged, "permissions", 6);
-  stringList(overview.controlChanges, "controls", 6);
+  string(overview.purpose, "overview purpose", 360);
+  if (!list(overview.requestedActions, "requested actions", 8).map((item) => string(item, "requested actions", 240)).length) throw new Error("Missing v2 action");
+  list(overview.assetsAffected, "assets", 6).forEach((item) => string(item, "assets", 240));
+  list(overview.permissionsChanged, "permissions", 6).forEach((item) => string(item, "permissions", 240));
+  list(overview.controlChanges, "controls", 6).forEach((item) => string(item, "controls", 240));
 
   const evidence = list(record.evidence, "evidence", 12).map((rawItem) => {
     const item = object(rawItem, "evidence entry");
@@ -109,12 +127,12 @@ export function parseDueDiligence(raw: unknown, proposalKey: string): StoredDueD
       throw new Error("Invalid v2 finding classification");
     }
     refs(item.evidence, "finding references");
-    stringList(item.existingSafeguards, "existing safeguards", 5);
-    stringList(item.missingSafeguards, "missing safeguards", 5);
+    list(item.existingSafeguards, "existing safeguards", 6).forEach((entry) => string(entry, "existing safeguards", 240));
+    list(item.missingSafeguards, "missing safeguards", 6).forEach((entry) => string(entry, "missing safeguards", 240));
     string(item.enforcementMechanism, "enforcement mechanism", 240, true);
     string(item.recoveryMechanism, "recovery mechanism", 240, true);
-    stringList(item.humanDependencies, "human dependencies", 4);
-    stringList(item.technicalDependencies, "technical dependencies", 4);
+    list(item.humanDependencies, "human dependencies", 4).forEach((entry) => string(entry, "human dependencies", 180));
+    list(item.technicalDependencies, "technical dependencies", 4).forEach((entry) => string(entry, "technical dependencies", 180));
     const findingConsensus = object(item.consensus, "finding consensus");
     if (findingConsensus.state !== "accepted" || findingConsensus.method !== "source_grounded_material_facts_v2") {
       throw new Error("Invalid v2 finding consensus");
@@ -126,6 +144,9 @@ export function parseDueDiligence(raw: unknown, proposalKey: string): StoredDueD
   const steps = list(record.executionMap, "execution map", 8).map((rawItem, index) => {
     const item = object(rawItem, "execution step");
     string(item.id, "step ID", 32); string(item.action, "step action", 250);
+    string(item.actor, "step actor", 120, true); string(item.target, "step target", 120, true);
+    string(item.asset, "step asset", 80, true); string(item.amount, "step amount", 80, true);
+    string(item.dependency, "step dependency", 180, true);
     if (item.order !== index + 1 || !reversible(item.reversible)) throw new Error("Invalid v2 execution order");
     refs(item.evidence, "step references");
     return item;
@@ -135,6 +156,7 @@ export function parseDueDiligence(raw: unknown, proposalKey: string): StoredDueD
     const item = object(rawItem, "question");
     string(item.id, "question ID", 32); string(item.question, "question", 240);
     string(item.whyItMatters, "question importance", 300);
+    string(item.evidenceGap, "evidence gap", 240, true);
     if (stringList(item.relatedFindingIds, "related findings", 6).some((id) => !findingIds.has(id))) {
       throw new Error("Invalid v2 related finding");
     }
@@ -152,6 +174,15 @@ export function parseDueDiligence(raw: unknown, proposalKey: string): StoredDueD
     throw new Error("Invalid v2 consensus method");
   }
   return record as unknown as StoredDueDiligenceAssessment;
+}
+
+export function parseDueDiligence(raw: unknown, proposalKey: string): StoredDueDiligenceAssessment | undefined {
+  try {
+    return parseDueDiligenceRecord(raw, proposalKey);
+  } catch (error) {
+    if (error instanceof DueDiligenceBoundaryError) throw error;
+    throw new DueDiligenceBoundaryError(error instanceof Error ? error.message : "Invalid v2 contract record");
+  }
 }
 
 export function claimStatusCounts(claims: StoredDueDiligenceAssessment["materialClaims"]) {
