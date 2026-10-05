@@ -39,6 +39,7 @@ describe("governance proposal domain", () => {
   it("rejects_score_outside_range", () => {
     expect(() =>
       assertGovernanceRiskAssessment({
+        assessmentVersion: "1",
         proposalKey: proposal.canonicalId,
         sourceLocatorHash: "0xsource",
         contentHash: "0xcontent",

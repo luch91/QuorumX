@@ -43,6 +43,33 @@ export async function submitDueDiligence(
   });
 }
 
+export async function findSubmittedTransaction(
+  settings: GenLayerSettings,
+  idempotencyKey: string,
+  contractAddress: `0x${string}`,
+): Promise<string | undefined> {
+  if (!settings.privateKey) throw new Error("GenLayer signing key is not configured");
+  const account = createAccount(settings.privateKey);
+  const client = clientFor(settings);
+  const raw = await client.request({ method: "sim_getTransactionsForAddress", params: [contractAddress] });
+  if (!Array.isArray(raw)) throw new Error("GenLayer transaction index returned an invalid response");
+  const matches = raw.filter((entry): entry is Record<string, unknown> => {
+    if (!entry || typeof entry !== "object") return false;
+    const transaction = entry as Record<string, unknown>;
+    const data = transaction.data as { calldata?: unknown } | undefined;
+    if (typeof transaction.hash !== "string" || typeof transaction.from_address !== "string"
+      || transaction.from_address.toLowerCase() !== account.address.toLowerCase()
+      || typeof data?.calldata !== "string") return false;
+    try {
+      const decoded = atob(data.calldata);
+      return decoded.includes(idempotencyKey) && decoded.includes("assess");
+    } catch { return false; }
+  });
+  if (matches.length > 1) throw new Error("Multiple GenLayer transactions match the submission intent");
+  const hash = matches[0]?.hash;
+  return typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash) ? hash : undefined;
+}
+
 function clientFor(settings: GenLayerSettings) {
   const account = settings.privateKey ? createAccount(settings.privateKey) : undefined;
   return createClient({ chain: studionet, endpoint: settings.rpcUrl, account });

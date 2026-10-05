@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "2",
+  "unknownFieldPolicy": "reject",
+  "recordMaxUtf8Bytes": 22000,
+  "cases": [
+    { "name": "halcyon", "existingSafeguards": 1, "accepted": true },
+    { "name": "eclipse", "existingSafeguards": 6, "accepted": true },
+    { "name": "too-many-safeguards", "existingSafeguards": 7, "accepted": false },
+    { "name": "unknown-root-field", "unknownRootField": true, "accepted": false }
+  ]
+}

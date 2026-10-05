@@ -546,11 +546,13 @@ class GovernanceDueDiligence(gl.Contract):
     def assess(self, source_json: str, idempotency_key: str) -> str:
         source = source_for(source_json)
         key = "snapshot:" + source["space"] + ":" + source["proposalId"]
-        idem = bounded_text(idempotency_key, "idempotency key", 128)
-        previous = self.idempotency.get(idem, "")
+        supplied_idem = bounded_text(idempotency_key, "idempotency key", 128)
+        if not supplied_idem.startswith("qx:v2:") or len(supplied_idem) != 70:
+            raise gl.vm.UserError("invalid derived idempotency key")
+        previous = self.idempotency.get(supplied_idem, "")
         if previous:
             if not previous.startswith(key + ":"):
-                raise gl.vm.UserError("idempotency key used for another proposal")
+                raise gl.vm.UserError("idempotency identity belongs to another proposal")
             return self.assessments.get(previous, "")
         source_memory = canonical_json(source)
 
@@ -559,6 +561,9 @@ class GovernanceDueDiligence(gl.Contract):
 
         material = gl.eq_principle.strict_eq(fetch_agreed_material)
         content_hash = sha256_text(material)
+        idem = "qx:v2:" + content_hash
+        if supplied_idem != idem:
+            raise gl.vm.UserError("idempotency key does not match validator-retrieved content")
         record_key = key + ":" + content_hash
         existing = self.assessments.get(record_key, "")
         if existing:

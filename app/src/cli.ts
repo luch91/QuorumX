@@ -1,13 +1,16 @@
 import { createDefaultCliDependencies, runQuorumXCli } from "./quorumx_cli";
+import { cliFailure } from "./cli/errors";
 
 export { createDefaultCliDependencies, runQuorumXCli } from "./quorumx_cli";
 export type { QuorumXCliDependencies } from "./quorumx_cli";
 
 if (require.main === module) {
-  void runQuorumXCli(process.argv.slice(2), createDefaultCliDependencies()).then((code) => {
+  const args = process.argv.slice(2);
+  void runQuorumXCli(args, createDefaultCliDependencies()).then((code) => {
     process.exitCode = code;
   }).catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 4;
+    const failure = cliFailure(error);
+    console.error(args.includes("--json") ? JSON.stringify({ error: failure.code, message: failure.message }) : `${failure.code}: ${failure.message}`);
+    process.exitCode = failure.exitCode;
   });
 }

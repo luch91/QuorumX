@@ -76,9 +76,29 @@ export async function recordSourceFailure(client: Client, source: SnapshotSource
   const sourceId = await ensureSnapshotSource(client, source);
   await client.query(`
     update quorumx.sources
-    set last_polled_at = now(), last_error = $2, updated_at = now()
+    set last_polled_at = now(), last_error = $2,
+        consecutive_failures = consecutive_failures + 1,
+        next_poll_at = now() + make_interval(secs => least(3600,
+          (30 * power(2, least(consecutive_failures, 7)))::integer + floor(random() * 15)::integer)),
+        updated_at = now()
     where id = $1
   `, [sourceId, message.slice(0, 1_000)]);
+}
+
+export async function isSourcePollDue(client: Client, source: SnapshotSourceDefinition): Promise<boolean> {
+  const result = await client.query<{ due: boolean }>(`
+    select coalesce((select next_poll_at <= now() from quorumx.sources where source_key = $1), true) as due
+  `, [`snapshot:${source.space}`]);
+  return result.rows[0]?.due ?? true;
+}
+
+export async function sourcePollOffset(client: Client, source: SnapshotSourceDefinition): Promise<number> {
+  const result = await client.query<{ offset: number }>(`
+    select coalesce((select greatest(0, (cursors.cursor ->> 'pageOffset')::integer)
+      from quorumx.poll_cursors cursors join quorumx.sources sources on sources.id = cursors.source_id
+      where sources.source_key = $1), 0)::integer as offset
+  `, [`snapshot:${source.space}`]);
+  return result.rows[0]?.offset ?? 0;
 }
 
 export async function ingestSnapshotProposals(
@@ -87,10 +107,14 @@ export async function ingestSnapshotProposals(
   proposals: SnapshotProposal[],
   now = new Date(),
   assessmentVersion: "1" | "2" = "1",
+  nextPageOffset?: number,
 ): Promise<IngestResult> {
   await client.query("begin");
   try {
     const sourceId = await ensureSnapshotSource(client, source);
+    // Serialize budget calculation and job creation for one source without
+    // blocking unrelated sources or holding a session-level lock.
+    await client.query("select pg_advisory_xact_lock($1::bigint)", [sourceId]);
     const recentJobs = await client.query<{ count: number }>(`
       select count(*)::integer as count
       from quorumx.assessment_jobs jobs
@@ -174,23 +198,39 @@ export async function ingestSnapshotProposals(
         })),
       };
       const contentHash = await sha256(canonicalJson(normalizedPayload));
-      const revisionResult = await client.query<{ id: string }>(`
-        insert into quorumx.proposal_revisions (proposal_id, content_hash, normalized_payload, fetched_at, created_at)
-        values ($1, $2, $3::jsonb, $4, $4)
-        on conflict (proposal_id, content_hash) do nothing
-        returning id::text
+      const revisionResult = await client.query<{ id: string; inserted: boolean }>(`
+        with inserted as (
+          insert into quorumx.proposal_revisions (proposal_id, content_hash, normalized_payload, fetched_at, created_at)
+          values ($1, $2, $3::jsonb, $4, $4)
+          on conflict (proposal_id, content_hash) do nothing
+          returning id::text, true as inserted
+        )
+        select id, inserted from inserted
+        union all
+        select id::text, false as inserted
+        from quorumx.proposal_revisions
+        where proposal_id = $1 and content_hash = $2
+          and not exists (select 1 from inserted)
+        limit 1
       `, [proposalId, contentHash, JSON.stringify(normalizedPayload), now.toISOString()]);
-
-      if (revisionResult.rowCount === 1) {
+      const revisionId = revisionResult.rows[0]?.id;
+      if (!revisionId) throw new Error("Indexed revision was not found");
+      const revisionInserted = revisionResult.rows[0].inserted;
+      if (revisionInserted) {
         revisionsCreated += 1;
       }
+      const observation = await client.query<{ id: string }>(`
+        insert into quorumx.proposal_revision_observations (proposal_id, revision_id, observed_at, created_at)
+        values ($1, $2, $3, $3)
+        returning id::text
+      `, [proposalId, revisionId, now.toISOString()]);
+      await client.query(`
+        update quorumx.proposals
+        set current_revision_id = $2, current_observation_id = $3, updated_at = $4
+        where id = $1
+      `, [proposalId, revisionId, observation.rows[0].id, now.toISOString()]);
       if (shouldAssess(proposal, now) && remainingBudget > 0
-        && (revisionResult.rowCount === 1 || assessmentVersion === "2")) {
-        const revisionId = revisionResult.rows[0]?.id ?? (await client.query<{ id: string }>(`
-          select id::text from quorumx.proposal_revisions
-          where proposal_id = $1 and content_hash = $2
-        `, [proposalId, contentHash])).rows[0]?.id;
-        if (!revisionId) throw new Error("Indexed revision was not found");
+        && (revisionInserted || assessmentVersion === "2")) {
         const jobResult = await client.query(`
           insert into quorumx.assessment_jobs
             (revision_id, assessment_version, status, available_at, created_at, updated_at)
@@ -209,12 +249,13 @@ export async function ingestSnapshotProposals(
 
     await client.query(`
       insert into quorumx.poll_cursors (source_id, cursor, updated_at)
-      values ($1, jsonb_build_object('newestSubmittedAt', $2::text), $3)
+      values ($1, jsonb_build_object('newestSubmittedAt', $2::text, 'pageOffset', $4::integer), $3)
       on conflict (source_id) do update set cursor = excluded.cursor, updated_at = excluded.updated_at
-    `, [sourceId, newestSubmittedAt ?? "", now.toISOString()]);
+    `, [sourceId, newestSubmittedAt ?? "", now.toISOString(), nextPageOffset ?? 0]);
     await client.query(`
       update quorumx.sources
-      set last_polled_at = $2, last_succeeded_at = $2, last_error = null, updated_at = $2
+      set last_polled_at = $2, last_succeeded_at = $2, last_error = null,
+          consecutive_failures = 0, next_poll_at = $2, updated_at = $2
       where id = $1
     `, [sourceId, now.toISOString()]);
     await client.query("commit");
@@ -251,7 +292,7 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
       order by submitted_at desc
       limit 1
     ) transactions on true
-    where jobs.status = 'submitted'
+    where jobs.status = 'submitted' and jobs.next_poll_at <= now()
     order by jobs.updated_at asc
     limit $1
   `, [Math.max(1, Math.min(limit, 20))]);
@@ -281,15 +322,16 @@ export async function claimAssessmentJob(
       attempt_count = attempt_count + 1,
       locked_at = now(),
       locked_by = $1,
+      lease_expires_at = now() + interval '5 minutes',
       updated_at = now()
     where jobs.id = (
       select candidate.id
       from quorumx.assessment_jobs candidate
       where candidate.assessment_version = $2 and (
-        (candidate.status in ('pending', 'retryable') and candidate.available_at <= now())
-        or (candidate.status = 'processing' and candidate.locked_at < now() - interval '15 minutes')
+        (candidate.status in ('pending', 'retryable') and candidate.next_poll_at <= now())
+        or (candidate.status = 'processing' and candidate.lease_expires_at <= now())
       )
-      order by candidate.available_at asc, candidate.id asc
+      order by candidate.attempt_count asc, candidate.next_poll_at asc, candidate.id asc
       limit 1
       for update skip locked
     )
@@ -339,7 +381,8 @@ export async function markJobRetry(client: Client, job: ClaimedJob, message: str
   await client.query(`
     update quorumx.assessment_jobs
     set status = $2, available_at = now() + make_interval(mins => $3),
-        locked_at = null, locked_by = null, last_error = $4, updated_at = now(),
+        next_poll_at = now() + make_interval(mins => $3),
+        locked_at = null, locked_by = null, lease_expires_at = null, last_error = $4, updated_at = now(),
         completed_at = case when $2 = 'dead_letter' then now() else null end
     where id = $1
   `, [job.id, terminal ? "dead_letter" : "retryable", delayMinutes, message.slice(0, 1_000)]);
@@ -361,8 +404,14 @@ export async function recordSubmittedTransaction(
       on conflict (transaction_hash) do nothing
     `, [job.id, network, contractAddress, transactionHash, "automatic_indexer"]);
     await client.query(`
+      update quorumx.submission_intents
+      set state = 'recorded', transaction_hash = $2, updated_at = now()
+      where job_id = $1
+    `, [job.id, transactionHash]);
+    await client.query(`
       update quorumx.assessment_jobs
-      set status = 'submitted', transaction_id = $2, locked_at = null, locked_by = null,
+      set status = 'submitted', transaction_id = $2, next_poll_at = now() + interval '15 seconds',
+          locked_at = null, locked_by = null, lease_expires_at = null,
           last_error = null, updated_at = now()
       where id = $1
     `, [job.id, transactionHash]);
@@ -371,6 +420,45 @@ export async function recordSubmittedTransaction(
     await client.query("rollback");
     throw error;
   }
+}
+
+export async function deferSubmittedPoll(client: Client, job: SubmittedJob): Promise<void> {
+  await client.query(`
+    update quorumx.assessment_jobs
+    set poll_attempt_count = poll_attempt_count + 1,
+        next_poll_at = now() + make_interval(secs => least(300, 5 * power(2, least(poll_attempt_count, 6)))::integer),
+        updated_at = now()
+    where id = $1 and status = 'submitted'
+  `, [job.jobId]);
+}
+
+export async function prepareSubmissionIntent(
+  client: Client, job: ClaimedJob, idempotencyKey: string,
+): Promise<{ created: boolean; state: string; transactionHash?: string }> {
+  const result = await client.query<{ created: boolean; state: string; transaction_hash: string | null }>(`
+    with inserted as (
+      insert into quorumx.submission_intents (job_id, idempotency_key)
+      values ($1, $2)
+      on conflict (job_id) do nothing
+      returning true as created, state, transaction_hash
+    )
+    select created, state, transaction_hash from inserted
+    union all
+    select false, state, transaction_hash from quorumx.submission_intents
+    where job_id = $1 and not exists (select 1 from inserted)
+    limit 1
+  `, [job.id, idempotencyKey]);
+  return { created: result.rows[0].created, state: result.rows[0].state, ...(result.rows[0].transaction_hash
+    ? { transactionHash: result.rows[0].transaction_hash } : {}) };
+}
+
+export async function markSubmissionUncertain(client: Client, job: ClaimedJob): Promise<void> {
+  await client.query(`
+    update quorumx.assessment_jobs
+    set status = 'dead_letter', last_error = 'submission_outcome_unknown', completed_at = now(),
+        locked_at = null, locked_by = null, lease_expires_at = null, updated_at = now()
+    where id = $1
+  `, [job.id]);
 }
 
 export async function finalizeAssessment(
@@ -387,44 +475,36 @@ export async function finalizeAssessment(
   try {
     if ("assessmentVersion" in input.assessment) {
       if (!input.transactionRowId) throw new Error("V2 assessment requires a recorded transaction");
-      await client.query(`
+      const inserted = await client.query(`
         insert into quorumx.due_diligence_assessments (
           revision_id, transaction_id, proposal_key, source_locator_hash, content_hash,
           record, consensus_state, provenance, assessed_at
         ) values ($1, $2, $3, $4, $5, $6::jsonb, 'accepted', $7, $8)
-        on conflict (revision_id) do update set
-          transaction_id = excluded.transaction_id,
-          proposal_key = excluded.proposal_key,
-          source_locator_hash = excluded.source_locator_hash,
-          content_hash = excluded.content_hash,
-          record = excluded.record,
-          consensus_state = excluded.consensus_state,
-          provenance = excluded.provenance,
-          assessed_at = excluded.assessed_at
+        on conflict (revision_id) do nothing
+        returning id
       `, [input.revisionId, input.transactionRowId, input.assessment.proposalKey,
         input.assessment.sourceLocatorHash, input.assessment.contentHash,
         JSON.stringify(input.assessment), input.assessment.provenance, input.assessment.assessedAt]);
+      if (inserted.rowCount === 0) {
+        const identical = await client.query(`
+          select 1 from quorumx.due_diligence_assessments
+          where revision_id = $1 and transaction_id = $2 and proposal_key = $3
+            and source_locator_hash = $4 and content_hash = $5 and record = $6::jsonb
+            and provenance = $7 and assessed_at = $8
+        `, [input.revisionId, input.transactionRowId, input.assessment.proposalKey,
+          input.assessment.sourceLocatorHash, input.assessment.contentHash,
+          JSON.stringify(input.assessment), input.assessment.provenance, input.assessment.assessedAt]);
+        if (identical.rowCount === 0) throw new Error("Accepted v2 assessment conflict: immutable record differs");
+      }
     } else {
-    await client.query(`
+    const inserted = await client.query(`
       insert into quorumx.assessments (
         revision_id, transaction_id, proposal_key, source_locator_hash, content_hash,
         risk_level, risk_score, risk_categories, recommendation, summary,
         consensus_state, provenance, assessed_at, indexed_from, created_at
       ) values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, 'accepted', $11, $12, $13, now())
-      on conflict (revision_id) do update set
-        transaction_id = coalesce(excluded.transaction_id, quorumx.assessments.transaction_id),
-        proposal_key = excluded.proposal_key,
-        source_locator_hash = excluded.source_locator_hash,
-        content_hash = excluded.content_hash,
-        risk_level = excluded.risk_level,
-        risk_score = excluded.risk_score,
-        risk_categories = excluded.risk_categories,
-        recommendation = excluded.recommendation,
-        summary = excluded.summary,
-        consensus_state = excluded.consensus_state,
-        provenance = excluded.provenance,
-        assessed_at = excluded.assessed_at,
-        indexed_from = excluded.indexed_from
+      on conflict (revision_id) do nothing
+      returning id
     `, [
       input.revisionId,
       input.transactionRowId ?? null,
@@ -440,6 +520,22 @@ export async function finalizeAssessment(
       input.assessment.assessedAt,
       input.indexedFrom,
     ]);
+    if (inserted.rowCount === 0) {
+      const identical = await client.query(`
+        select 1 from quorumx.assessments
+        where revision_id = $1 and transaction_id is not distinct from $2::bigint
+          and proposal_key = $3 and source_locator_hash = $4 and content_hash = $5
+          and risk_level = $6 and risk_score = $7 and risk_categories = $8::jsonb
+          and recommendation = $9 and summary = $10 and provenance = $11
+          and assessed_at = $12 and indexed_from = $13
+      `, [input.revisionId, input.transactionRowId ?? null, input.assessment.proposalKey,
+        input.assessment.sourceLocatorHash, input.assessment.contentHash,
+        input.assessment.riskLevel, input.assessment.riskScore,
+        JSON.stringify(input.assessment.riskCategories), input.assessment.recommendation,
+        input.assessment.summary, input.assessment.provenance, input.assessment.assessedAt,
+        input.indexedFrom]);
+      if (identical.rowCount === 0) throw new Error("Accepted v1 assessment conflict: immutable record differs");
+    }
     }
     if (input.transactionRowId) {
       await client.query(`
@@ -450,7 +546,7 @@ export async function finalizeAssessment(
     }
     await client.query(`
       update quorumx.assessment_jobs
-      set status = 'finalized', locked_at = null, locked_by = null, last_error = null,
+      set status = 'finalized', locked_at = null, locked_by = null, lease_expires_at = null, last_error = null,
           completed_at = now(), updated_at = now()
       where id = $1
     `, [input.jobId]);
@@ -485,6 +581,31 @@ export async function markSubmittedTerminal(
           updated_at = now()
       where id = $1
     `, [job.jobId, message.slice(0, 1_000), retryable ? "retryable" : "dead_letter", delayMinutes]);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
+export async function quarantineSubmittedAssessment(
+  client: Client,
+  job: SubmittedJob,
+  category: string,
+): Promise<void> {
+  await client.query("begin");
+  try {
+    await client.query(`
+      update quorumx.transactions
+      set state = 'undetermined', error = $2, finalized_at = now(), updated_at = now()
+      where id = $1
+    `, [job.transactionRowId, category]);
+    await client.query(`
+      update quorumx.assessment_jobs
+      set status = 'dead_letter', last_error = $2, completed_at = now(),
+          locked_at = null, locked_by = null, lease_expires_at = null, updated_at = now()
+      where id = $1
+    `, [job.jobId, category]);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");

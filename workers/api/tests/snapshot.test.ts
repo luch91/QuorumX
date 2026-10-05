@@ -28,7 +28,7 @@ describe("Snapshot ingestion", () => {
     const fetcher = jest.fn(async (input: URL | RequestInfo) => {
       const url = new URL(String(input));
       expect(url.origin).toBe("https://hub.snapshot.org");
-      expect(JSON.parse(url.searchParams.get("variables")!)).toEqual({ spaces: ["balancer.eth"], limit: 50 });
+      expect(JSON.parse(url.searchParams.get("variables")!)).toEqual({ spaces: ["balancer.eth"], limit: 50, skip: 0 });
       return new Response(JSON.stringify({ data: { proposals: [{
         id: "proposal-1", title: "One", body: "Body", choices: [], state: "closed",
         author: "0x2222222222222222222222222222222222222222", space: { id: "balancer.eth" },
@@ -45,5 +45,19 @@ describe("Snapshot ingestion", () => {
       { status: 200 },
     )) as typeof fetch;
     await expect(fetchRecentSnapshotProposals("balancer.eth", fetcher)).rejects.toThrow("bad query");
+  });
+
+  it("rejects a chunked oversized response before full materialization", async () => {
+    const chunk = new Uint8Array(750_000).fill(65);
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream({ pull(controller) {
+      pulls += 1;
+      controller.enqueue(chunk);
+      if (pulls === 4) controller.close();
+    }, cancel() { cancelled = true; } });
+    const fetcher = jest.fn(async () => new Response(body, { status: 200 })) as typeof fetch;
+    await expect(fetchRecentSnapshotProposals("balancer.eth", fetcher)).rejects.toThrow("size limit");
+    expect(cancelled).toBe(true);
   });
 });
