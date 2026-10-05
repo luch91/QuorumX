@@ -1,6 +1,6 @@
 # QuorumX API Worker
 
-The Cloudflare Worker is the v0.3 multi-DAO governance indexer and public API. It is deployed at <https://api.quorumx.dev>, runs every five minutes, and connects to Neon exclusively through the `HYPERDRIVE` binding.
+The Cloudflare Worker is the v0.4 multi-DAO governance indexer and public API. It is deployed at <https://api.quorumx.dev>, runs every five minutes, and connects to Neon exclusively through the `HYPERDRIVE` binding.
 
 Current endpoints:
 
@@ -13,11 +13,15 @@ Current endpoints:
 - `GET /v2/proposals/<canonical-id>/due-diligence` returns the latest accepted v2 findings, claims, evidence, execution map, unresolved questions, and transaction provenance when available.
 
 The v2 route is versioned so v1 clients keep their original response semantics.
-Automatic v2 submissions are disabled by default: `QUORUMX_ASSESSMENT_VERSION`
-remains `1` and `QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS` remains empty until a
-new contract has passed Studionet write/read verification. V1 records and
-transactions remain inspectable. Apply database migration `0006` before
-deploying the Worker code that reads the new table.
+The checked-in Worker configuration selects assessment version 2 and enables
+writes. Local `.env.example` remains write-disabled. V1 records and transactions
+remain inspectable. Apply every migration through
+`0010_runtime_privilege_matrix.sql` before deploying this Worker.
+
+`GET /health/live` is dependency-free liveness. `GET /health/ready` reports
+database/source/queue readiness plus the public release attestation. See the
+[operations runbook](../../docs/OPERATIONS.md) and
+[release checklist](../../docs/RELEASE_CHECKLIST.md).
 
 `POST /internal/run` is an operations-only manual trigger protected by `QUORUMX_ADMIN_TOKEN`. The normal path is the cron: discover recent proposals from the allowlisted Balancer, SafeDAO, Arbitrum DAO, and ENS DAO Snapshot spaces; persist content-addressed revisions; apply per-source rolling 24-hour assessment budgets; atomically claim one eligible job; submit or recover its GenLayer transaction; and index readable matching contract state. Do not expose the admin token, signing key, or Neon connection string as a Worker variable or browser value.
 

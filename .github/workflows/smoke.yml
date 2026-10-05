@@ -9,6 +9,13 @@ on:
     paths:
       - app/src/genlayer/**
       - app/src/ingest/sources/snapshot_source.ts
+      - contracts/**
+      - database/migrations/**
+      - frontend/**
+      - workers/api/**
+      - workers/site/**
+      - wrangler.jsonc
+      - wrangler.site.jsonc
       - scripts/validate_quorumx.ts
       - package.json
       - package-lock.json
