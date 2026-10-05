@@ -1,13 +1,14 @@
 (function (root, factory) {
-  const api = factory();
+  const api = factory(root);
   if (typeof module === "object" && module.exports) module.exports = api;
   root.QuorumXFrontend = api;
   if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", api.init);
-})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (root) {
   "use strict";
 
-  const API = "https://api.quorumx.dev";
-  const state = { sources: [], proposals: [], nextCursor: null, filters: {}, search: "" };
+  const resolveApiBase = (scope) => String(scope?.QUORUMX_API_BASE || "/api").replace(/\/$/, "");
+  const API = resolveApiBase(root);
+  const state = { sources: [], proposals: [], nextCursor: null, filters: {}, search: "", listGeneration: 0, detailGeneration: 0, listController: null, detailController: null, loadingMore: false, recordTrigger: null };
 
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
@@ -22,21 +23,29 @@
   const assessmentSignal = (proposal) => proposal.assessmentVersion === "2"
     ? `${titleCase(proposal.reviewPriority)} review · ${proposal.findingCount ?? proposal.dueDiligence?.findings?.length ?? 0} findings`
     : proposal.riskLevel ? "Legacy risk assessment" : "Not yet reviewed";
+  const isCurrentRequest = (currentGeneration, requestGeneration) => currentGeneration === requestGeneration;
+  const mergeUniqueProposals = (current, incoming) => [...new Map([...current, ...incoming]
+    .map((proposal) => [proposal.canonicalId, proposal])).values()];
+  const particleBudget = (width, reduced, cores = 4) => reduced || width < 820 || cores <= 4
+    ? { cloud: 0, logo: 0, fps: 0 }
+    : { cloud: 2000, logo: 300, fps: 30 };
 
   function buildProposalQuery(filters = {}, cursor, limit = 24) {
     const params = new URLSearchParams({ limit: String(limit) });
-    ["status", "assessment", "ecosystem", "author", "source", "dao", "space"].forEach((key) => {
+    ["status", "assessment", "ecosystem", "author", "source", "dao", "space", "q", "sort"].forEach((key) => {
       if (filters[key]) params.set(key, filters[key]);
     });
     if (cursor) params.set("cursor", cursor);
     return `${API}/v1/proposals?${params}`;
   }
 
-  async function requestJson(url) {
-    const response = await fetch(url, { headers: { accept: "application/json" } });
+  async function requestJson(url, signal) {
+    const response = await fetch(url, { headers: { accept: "application/json" }, signal });
     if (!response.ok) throw new Error(`The public index returned ${response.status}`);
     return response.json();
   }
+
+  const proposalPath = (canonicalId) => `/proposals/${encodeURIComponent(canonicalId)}`;
 
   function proposalMatchesSearch(proposal, search) {
     if (!search) return true;
@@ -47,43 +56,59 @@
   function proposalRow(proposal) {
     const risk = assessmentSignal(proposal);
     return `<tr>
-      <td><button class="proposal-title-button" type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">${escapeHtml(proposal.title)}</button></td>
+      <td><a class="proposal-title-button" href="${escapeHtml(proposalPath(proposal.canonicalId))}" data-open-proposal="${escapeHtml(proposal.canonicalId)}">${escapeHtml(proposal.title)}</a></td>
       <td><span class="dao-cell"><img src="${escapeHtml(safeHttpUrl(proposal.daoLogoUrl))}" alt="" loading="lazy">${escapeHtml(proposal.daoName)}</span></td>
       <td><span class="badge ${proposal.status === "active" ? "badge-active" : ""}">${escapeHtml(titleCase(proposal.status))}</span></td>
       <td><span class="${proposal.assessmentVersion === "2" ? "badge-finalized" : "risk-none"}">${escapeHtml(risk)}</span></td>
       <td><span class="badge ${proposal.assessmentStatus === "finalized" ? "badge-finalized" : ""}">${escapeHtml(assessmentLabel(proposal.assessmentStatus))}</span></td>
       <td>${escapeHtml(formatDate(proposal.votingEndsAt, { month: "short", day: "numeric", year: "numeric" }))}</td>
-      <td><button class="proposal-title-button row-arrow" type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}" aria-label="Open ${escapeHtml(proposal.title)}">→</button></td>
+      <td><a class="proposal-title-button row-arrow" href="${escapeHtml(proposalPath(proposal.canonicalId))}" data-open-proposal="${escapeHtml(proposal.canonicalId)}" aria-label="Open ${escapeHtml(proposal.title)}">→</a></td>
     </tr>`;
   }
 
   function mobileProposal(proposal) {
     const risk = assessmentSignal(proposal);
-    return `<article class="mobile-card"><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}"><span class="dao-cell"><img src="${escapeHtml(safeHttpUrl(proposal.daoLogoUrl))}" alt="">${escapeHtml(proposal.daoName)}</span><h3>${escapeHtml(proposal.title)}</h3><span class="mobile-card-meta"><span class="badge ${proposal.status === "active" ? "badge-active" : ""}">${escapeHtml(titleCase(proposal.status))}</span><span class="badge">${escapeHtml(risk)}</span><span class="badge">Ends ${escapeHtml(formatDate(proposal.votingEndsAt, { month: "short", day: "numeric" }))}</span></span></button></article>`;
+    return `<article class="mobile-card"><a href="${escapeHtml(proposalPath(proposal.canonicalId))}" data-open-proposal="${escapeHtml(proposal.canonicalId)}"><span class="dao-cell"><img src="${escapeHtml(safeHttpUrl(proposal.daoLogoUrl))}" alt="">${escapeHtml(proposal.daoName)}</span><h3>${escapeHtml(proposal.title)}</h3><span class="mobile-card-meta"><span class="badge ${proposal.status === "active" ? "badge-active" : ""}">${escapeHtml(titleCase(proposal.status))}</span><span class="badge">${escapeHtml(risk)}</span><span class="badge">Ends ${escapeHtml(formatDate(proposal.votingEndsAt, { month: "short", day: "numeric" }))}</span></span></a></article>`;
   }
 
   function renderProposals() {
-    const visible = state.proposals.filter((proposal) => proposalMatchesSearch(proposal, state.search));
+    const visible = state.proposals;
     $("[data-proposals]").innerHTML = visible.length ? visible.map(proposalRow).join("") : '<tr><td colspan="7"><div class="empty-block">No proposals match these filters.</div></td></tr>';
     $("[data-mobile-proposals]").innerHTML = visible.length ? visible.map(mobileProposal).join("") : '<div class="empty-block">No proposals match these filters.</div>';
-    $("[data-index-status]").textContent = `${visible.length} proposal${visible.length === 1 ? "" : "s"} shown · Live data from api.quorumx.dev`;
+    $("[data-index-status]").textContent = `${visible.length} proposal${visible.length === 1 ? "" : "s"} shown${state.nextCursor ? " · More matching results available" : " · Complete matching result"} · Live data from api.quorumx.dev`;
     $("[data-load-more]").hidden = !state.nextCursor;
   }
 
   async function loadProposals(append = false, limit = 24) {
+    if (append && state.loadingMore) return;
+    if (!append) state.listController?.abort();
+    const generation = append ? state.listGeneration : ++state.listGeneration;
+    const controller = new AbortController();
+    if (!append) state.listController = controller;
+    state.loadingMore = append;
+    const moreButton = $("[data-load-more]");
+    moreButton.disabled = append;
     const target = $("[data-index-status]");
+    $("#proposals").setAttribute("aria-busy", "true");
     target.textContent = append ? "Loading more proposals…" : "Refreshing the public index…";
     try {
-      const payload = await requestJson(buildProposalQuery(state.filters, append ? state.nextCursor : undefined, limit));
-      state.proposals = append ? [...state.proposals, ...payload.data] : payload.data;
+      const filters = { ...state.filters, ...(state.search ? { q: state.search } : {}) };
+      const payload = await requestJson(buildProposalQuery(filters, append ? state.nextCursor : undefined, limit), controller.signal);
+      if (!isCurrentRequest(state.listGeneration, generation)) return;
+      state.proposals = append
+        ? mergeUniqueProposals(state.proposals, payload.data)
+        : payload.data;
       state.nextCursor = payload.page?.nextCursor ?? null;
       renderProposals();
     } catch (error) {
+      if (error.name === "AbortError" || !isCurrentRequest(state.listGeneration, generation)) return;
       target.textContent = `Proposal index unavailable: ${error.message}`;
       if (!append) {
-        $("[data-proposals]").innerHTML = '<tr><td colspan="7"><div class="error-block">The proposal index could not be loaded. Public documentation remains available below.</div></td></tr>';
-        $("[data-mobile-proposals]").innerHTML = '<div class="error-block">The proposal index could not be loaded.</div>';
+        $("[data-proposals]").innerHTML = '<tr><td colspan="7"><div class="error-block">The proposal index could not be loaded. Your search and filters are preserved. <button type="button" data-retry-proposals>Retry</button></div></td></tr>';
+        $("[data-mobile-proposals]").innerHTML = '<div class="error-block">The proposal index could not be loaded. <button type="button" data-retry-proposals>Retry</button></div>';
       }
+    } finally {
+      if (isCurrentRequest(state.listGeneration, generation)) { state.loadingMore = false; moreButton.disabled = false; $("#proposals").setAttribute("aria-busy", "false"); }
     }
   }
 
@@ -96,21 +121,22 @@
       : proposal.riskLevel
         ? "A legacy assessment exists. Its historical score does not represent a probability or a defined weighted total."
         : "This proposal remains within its public voting window and awaits due-diligence review.";
-    return `<article class="attention-card ${primary ? "is-primary" : ""}"><p class="dao-line">${escapeHtml(proposal.daoName)} · ${escapeHtml(proposal.space)}</p><h3>${escapeHtml(proposal.title)}</h3><p class="attention-reason">${escapeHtml(reason)}</p><div class="attention-meta"><span class="badge badge-active">${escapeHtml(titleCase(proposal.status))}</span><span class="badge">${escapeHtml(risk)}</span><span class="badge">${escapeHtml(deadline)}</span></div><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">Inspect this proposal →</button></article>`;
+    return `<article class="attention-card ${primary ? "is-primary" : ""}"><p class="dao-line">${escapeHtml(proposal.daoName)} · ${escapeHtml(proposal.space)}</p><h3>${escapeHtml(proposal.title)}</h3><p class="attention-reason">${escapeHtml(reason)}</p><div class="attention-meta"><span class="badge badge-active">${escapeHtml(titleCase(proposal.status))}</span><span class="badge">${escapeHtml(risk)}</span><span class="badge">${escapeHtml(deadline)}</span></div><a href="${escapeHtml(proposalPath(proposal.canonicalId))}" data-open-proposal="${escapeHtml(proposal.canonicalId)}">Inspect this proposal →</a></article>`;
   }
 
   async function loadAttention() {
     const target = $("[data-attention]");
     try {
-      const payload = await requestJson(buildProposalQuery({ status: "active" }));
-      const ranked = payload.data.sort((a, b) => (priorityRank[b.reviewPriority] ?? 0) - (priorityRank[a.reviewPriority] ?? 0)
-        || (daysUntil(a.votingEndsAt) ?? 999) - (daysUntil(b.votingEndsAt) ?? 999)).slice(0, 2);
+      const payload = await requestJson(buildProposalQuery({ status: "active", sort: "priority" }));
+      const ranked = payload.data.slice(0, 2);
       target.innerHTML = ranked.length ? ranked.map((proposal, index) => attentionCard(proposal, index === 0)).join("") : '<div class="empty-block">No active proposal currently requires priority review.</div>';
-    } catch (error) { target.innerHTML = `<div class="error-block">Priority queue unavailable: ${escapeHtml(error.message)}</div>`; }
+      $("[data-attention-status]").textContent = ranked.length ? `${ranked.length} globally prioritized proposals loaded.` : "No active proposal requires priority review.";
+    } catch (error) { target.innerHTML = `<div class="error-block">Priority queue unavailable: ${escapeHtml(error.message)}</div>`; $("[data-attention-status]").textContent = "Priority queue could not be loaded."; }
+    finally { target.setAttribute("aria-busy", "false"); }
   }
 
   function assessmentRow(proposal) {
-    return `<article class="assessment-row"><button type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}">${escapeHtml(proposal.title)}<small>${escapeHtml(proposal.daoName)}</small></button><span>${escapeHtml(assessmentSignal(proposal))}</span><span>${escapeHtml(proposal.assessmentVersion === "2" ? "Consensus findings" : "Legacy model")}</span><span>${escapeHtml(formatDate(proposal.assessedAt))}</span><button class="proposal-title-button row-arrow" type="button" data-open-proposal="${escapeHtml(proposal.canonicalId)}" aria-label="Open assessment">→</button></article>`;
+    return `<article class="assessment-row"><a href="${escapeHtml(proposalPath(proposal.canonicalId))}" data-open-proposal="${escapeHtml(proposal.canonicalId)}">${escapeHtml(proposal.title)}<small>${escapeHtml(proposal.daoName)}</small></a><span>${escapeHtml(assessmentSignal(proposal))}</span><span>${escapeHtml(proposal.assessmentVersion === "2" ? "Consensus findings" : "Legacy model")}</span><span>${escapeHtml(formatDate(proposal.assessedAt))}</span><a class="proposal-title-button row-arrow" href="${escapeHtml(proposalPath(proposal.canonicalId))}" data-open-proposal="${escapeHtml(proposal.canonicalId)}" aria-label="Open assessment">→</a></article>`;
   }
 
   async function loadAssessments() {
@@ -118,7 +144,9 @@
     try {
       const payload = await requestJson(buildProposalQuery({ assessment: "finalized" }));
       target.innerHTML = payload.data.length ? payload.data.slice(0, 8).map(assessmentRow).join("") : '<div class="empty-block">No accepted assessments are currently indexed.</div>';
-    } catch (error) { target.innerHTML = `<div class="error-block">Assessments unavailable: ${escapeHtml(error.message)}</div>`; }
+      $("[data-assessment-status]").textContent = `${Math.min(payload.data.length, 8)} accepted assessments loaded.`;
+    } catch (error) { target.innerHTML = `<div class="error-block">Assessments unavailable: ${escapeHtml(error.message)}</div>`; $("[data-assessment-status]").textContent = "Accepted assessments could not be loaded."; }
+    finally { target.setAttribute("aria-busy", "false"); }
   }
 
   function sourceCard(source) {
@@ -134,7 +162,10 @@
       target.innerHTML = state.sources.map(sourceCard).join("");
       const select = $("[data-filter-dao]");
       select.insertAdjacentHTML("beforeend", state.sources.map((source) => `<option value="${escapeHtml(source.configuration.space)}">${escapeHtml(source.displayName)}</option>`).join(""));
-    } catch (error) { target.innerHTML = `<div class="error-block">DAO directory unavailable: ${escapeHtml(error.message)}</div>`; }
+      if (state.filters.space) select.value = state.filters.space;
+      $("[data-dao-status]").textContent = `${state.sources.length} DAO sources loaded.`;
+    } catch (error) { target.innerHTML = `<div class="error-block">DAO directory unavailable: ${escapeHtml(error.message)}</div>`; $("[data-dao-status]").textContent = "DAO sources could not be loaded."; }
+    finally { target.setAttribute("aria-busy", "false"); }
   }
 
   function fact(label, value) { return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd></div>`; }
@@ -189,17 +220,29 @@
     $("[data-record-evidence]").innerHTML = `<h3>Evidence & provenance</h3><div class="verdict"><strong>${escapeHtml(versionLabel)}</strong><span>${escapeHtml(isV2 ? `${proposal.dueDiligence.findings.length} findings · ${proposal.dueDiligence.materialClaims.length} claims` : proposal.riskLevel ? `Historical score: ${score}/100 (not mathematically interpretable)` : "Awaiting assessment")}</span></div><ol class="proof-steps"><li>Canonical source found</li><li>Proposal material indexed</li><li>${accepted ? "Assessment accepted" : `Assessment ${assessmentLabel(proposal.assessmentStatus).toLowerCase()}`}</li></ol><div class="evidence-list">${evidenceItem("Source", "Open Snapshot proposal", proposal.canonicalUrl)}${evidenceItem("Proposer", short(proposal.authorAddress))}${evidenceItem("Revision", short(proposal.revisionHash, 8, 6))}${evidenceItem("Transaction", short(proposal.transactionHash, 8, 6), transactionUrl)}${evidenceItem("Network", proposal.transactionHash ? "GenLayer Studionet" : "—")}${evidenceItem("Consensus", isV2 ? "Source-grounded material facts accepted" : proposal.consensusState ? titleCase(proposal.consensusState) : "—")}</div>${transactionUrl ? `<a class="button button-ink" href="${escapeHtml(transactionUrl)}" target="_blank" rel="noreferrer">View transaction ↗</a>` : ""}`;
   }
 
-  async function openRecord(canonicalId) {
+  async function openRecord(canonicalId, options = {}) {
+    const generation = ++state.detailGeneration;
+    state.detailController?.abort();
+    state.detailController = new AbortController();
+    if (options.push !== false) history.pushState({ canonicalId }, "", proposalPath(canonicalId));
     const dialog = $("[data-record-dialog]");
     $("[data-public-record]").hidden = true;
     $("[data-record-loading]").hidden = false;
+    $("[data-record-loading]").textContent = "Loading public record…";
+    dialog.setAttribute("aria-describedby", "record-loading");
     dialog.showModal(); document.body.classList.add("dialog-open");
+    $("[data-record-loading]").focus();
     try {
-      const payload = await requestJson(`${API}/v1/proposals/${encodeURIComponent(canonicalId)}`);
+      const payload = await requestJson(`${API}/v1/proposals/${encodeURIComponent(canonicalId)}`, state.detailController.signal);
+      if (!isCurrentRequest(state.detailGeneration, generation)) return;
       renderRecord(payload.data);
       $("[data-record-loading]").hidden = true;
       $("[data-public-record]").hidden = false;
-    } catch (error) { $("[data-record-loading]").textContent = `Public record unavailable: ${error.message}`; }
+      dialog.removeAttribute("aria-describedby");
+      $("[data-record-close]").focus();
+    } catch (error) {
+      if (error.name !== "AbortError" && isCurrentRequest(state.detailGeneration, generation)) $("[data-record-loading]").textContent = `Public record unavailable: ${error.message}`;
+    }
   }
 
   function closeDialog(dialog) { dialog.close(); document.body.classList.remove("dialog-open"); }
@@ -207,13 +250,25 @@
   function setupDelegatedActions() {
     $$("dialog").forEach((dialog) => dialog.addEventListener("close", () => {
       if (!$("dialog[open]")) document.body.classList.remove("dialog-open");
+      if (dialog.matches("[data-record-dialog]")) state.recordTrigger?.focus();
+      if (dialog.matches("[data-record-dialog]") && location.pathname.startsWith("/proposals/")) history.pushState(null, "", "/");
     }));
     document.addEventListener("click", (event) => {
       const trigger = event.target.closest("[data-open-proposal]");
-      if (trigger) openRecord(trigger.dataset.openProposal);
+      if (trigger && !event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault(); state.recordTrigger = trigger; openRecord(trigger.dataset.openProposal);
+      }
+      if (event.target.closest("[data-retry-proposals]")) loadProposals(false, state.search ? 100 : 24);
     });
-    $("[data-record-close]").addEventListener("click", () => closeDialog($("[data-record-dialog]")));
+    $("[data-record-close]").addEventListener("click", () => {
+      closeDialog($("[data-record-dialog]"));
+    });
     $("[data-record-dialog]").addEventListener("click", (event) => { if (event.target === event.currentTarget) closeDialog(event.currentTarget); });
+    window.addEventListener("popstate", () => {
+      const match = location.pathname.match(/^\/proposals\/([^/]+)$/);
+      if (match) openRecord(decodeURIComponent(match[1]), { push: false });
+      else if ($("[data-record-dialog]").open) closeDialog($("[data-record-dialog]"));
+    });
   }
 
   function setupFilters() {
@@ -222,21 +277,30 @@
       event.preventDefault();
       state.search = indexSearch.value;
       state.filters = { space: $("[data-filter-dao]").value, status: $("[data-filter-status]").value, assessment: $("[data-filter-assessment]").value };
+      syncListUrl();
       loadProposals(false, state.search ? 100 : 24);
     });
     searchInputs.forEach((input) => input.addEventListener("input", () => {
       state.search = input.value;
       searchInputs.forEach((searchInput) => { if (searchInput !== input) searchInput.value = input.value; });
-      renderProposals();
+      if (!input.matches("[data-header-search]")) return;
     }));
     $("[data-header-search]").addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
       state.search = event.currentTarget.value;
+      syncListUrl();
       loadProposals(false, state.search ? 100 : 24);
-      $("#proposals").scrollIntoView({ behavior: "smooth" });
+      $("#proposals").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     });
     $("[data-load-more]").addEventListener("click", () => loadProposals(true));
+  }
+
+  function syncListUrl() {
+    const params = new URLSearchParams();
+    Object.entries(state.filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    if (state.search) params.set("q", state.search);
+    history.replaceState(null, "", `/${params.size ? `?${params}` : ""}#proposals`);
   }
 
   function setupNavigation() {
@@ -264,7 +328,10 @@
 
   function setupParticles() {
     const canvas = $("#dao-particles"); if (!canvas) return;
-    const context = canvas.getContext("2d"), reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (particleBudget(innerWidth, reduced, navigator.hardwareConcurrency ?? 4).cloud === 0) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
     const marks = [
       { src: "assets/balancer.webp", center: .40, mode: "dark" },
       { src: "assets/safe.webp", center: .55, mode: "dark" },
@@ -272,6 +339,7 @@
       { src: "assets/ens.webp", center: .85, mode: "light" },
     ];
     let cloud = [], logoParticles = [], logoMasks = [], frame = 0, width = 0, height = 0;
+    let heroVisible = true, documentVisible = !document.hidden, lastFrame = 0;
 
     function normalRandom() {
       return Math.sqrt(-2 * Math.log(Math.max(Math.random(), .0001))) * Math.cos(Math.PI * 2 * Math.random());
@@ -309,7 +377,8 @@
       logoMasks.forEach((mask, markIndex) => {
         if (!mask.length) return;
         const mark = marks[markIndex], mobile = width < 820, centers = mobile ? [.13, .38, .63, .88] : marks.map((item) => item.center);
-        const count = 680, scale = Math.min(width * (mobile ? .18 : .095), mobile ? 90 : 132) / 160;
+        const count = particleBudget(width, reduced, navigator.hardwareConcurrency ?? 4).logo;
+        const scale = Math.min(width * (mobile ? .18 : .095), mobile ? 90 : 132) / 160;
         for (let index = 0; index < count; index += 1) {
           const point = mask[Math.floor(index * mask.length / count) % mask.length];
           const targetX = width * centers[markIndex] + point.x * scale;
@@ -324,7 +393,7 @@
       const nextWidth = Math.round(rect.width), nextHeight = Math.round(rect.height);
       if (nextWidth === width && nextHeight === height && cloud.length) return;
       width = nextWidth; height = nextHeight; canvas.width = width * ratio; canvas.height = height * ratio; context.setTransform(ratio,0,0,ratio,0,0);
-      cloud = Array.from({ length: reduced ? 3000 : 5600 }, () => {
+      cloud = Array.from({ length: particleBudget(width, reduced, navigator.hardwareConcurrency ?? 4).cloud }, () => {
         const x = width * (.19 + Math.random() * .82), progress = x / width;
         const centerY = height * (.37 + .055 * Math.sin(progress * 7.2) + .02 * Math.sin(progress * 15.5));
         const y = centerY + normalRandom() * height * .085;
@@ -335,6 +404,9 @@
     }
 
     function draw(time = 0) {
+      const budget = particleBudget(width, reduced, navigator.hardwareConcurrency ?? 4);
+      if (!reduced && budget.fps && time - lastFrame < 1000 / budget.fps) { frame = requestAnimationFrame(draw); return; }
+      lastFrame = time;
       context.clearRect(0, 0, width, height);
       context.globalCompositeOperation = "lighter";
       for (const particle of cloud) {
@@ -359,18 +431,37 @@
         context.beginPath(); context.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2); context.fill();
       }
       context.globalAlpha = 1; context.globalCompositeOperation = "source-over";
-      if (!reduced) frame = requestAnimationFrame(draw);
+      if (!reduced && budget.fps > 0 && heroVisible && documentVisible) frame = requestAnimationFrame(draw);
+    }
+    function pause() { cancelAnimationFrame(frame); frame = 0; }
+    function resume() {
+      if (!reduced && particleBudget(width, reduced, navigator.hardwareConcurrency ?? 4).fps > 0
+        && heroVisible && documentVisible && !frame) frame = requestAnimationFrame(draw);
     }
     const observer = new ResizeObserver(resize); observer.observe(canvas); resize(); draw();
-    Promise.all(marks.map(sampleLogo)).then((masks) => { logoMasks = masks; placeLogos(); if (!reduced) { cancelAnimationFrame(frame); frame = requestAnimationFrame(draw); } else draw(); });
-    window.addEventListener("pagehide", () => { cancelAnimationFrame(frame); observer.disconnect(); }, { once: true });
+    const visibilityObserver = new IntersectionObserver(([entry]) => { heroVisible = entry.isIntersecting; if (heroVisible) resume(); else pause(); });
+    visibilityObserver.observe(canvas);
+    const onVisibility = () => { documentVisible = !document.hidden; if (documentVisible) resume(); else pause(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    if (particleBudget(width, reduced, navigator.hardwareConcurrency ?? 4).logo > 0) {
+      Promise.all(marks.map(sampleLogo)).then((masks) => { logoMasks = masks; placeLogos(); pause(); draw(); });
+    }
+    window.addEventListener("pagehide", () => { pause(); observer.disconnect(); visibilityObserver.disconnect(); document.removeEventListener("visibilitychange", onVisibility); }, { once: true });
   }
 
   function init() {
+    const params = new URLSearchParams(location.search);
+    state.search = params.get("q") ?? "";
+    ["status", "assessment", "space"].forEach((key) => { if (params.get(key)) state.filters[key] = params.get(key); });
     setupNavigation(); setupWallet(); setupFilters(); setupDelegatedActions(); setupParticles();
+    $$("[data-search]").forEach((input) => { input.value = state.search; });
+    if (state.filters.status) $("[data-filter-status]").value = state.filters.status;
+    if (state.filters.assessment) $("[data-filter-assessment]").value = state.filters.assessment;
     Promise.allSettled([loadSources(), loadAttention(), loadProposals(), loadAssessments()]);
+    const match = location.pathname.match(/^\/proposals\/([^/]+)$/);
+    if (match) openRecord(decodeURIComponent(match[1]), { push: false });
   }
 
-  return { init, buildProposalQuery, proposalMatchesSearch, daysUntil, short, safeHttpUrl,
+  return { init, buildProposalQuery, proposalMatchesSearch, proposalPath, isCurrentRequest, mergeUniqueProposals, particleBudget, daysUntil, short, safeHttpUrl, resolveApiBase,
     assessmentLabel, assessmentSignal, renderDueDiligence };
 });
