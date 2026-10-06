@@ -44,6 +44,12 @@ days.
 6. Deploy the API before the site, verify `/health/live`, then require an
    acceptable `/health/ready` attestation before directing traffic.
 
+For an isolated UI rehearsal, deploy the API as `quorumx-api-v2-dev`, keep
+writes and schedules disabled, and run `npm run cf:dry-run:site:staging`
+followed by `npm run cf:deploy:site:staging`. The staging site uses a Worker
+service binding to that API, publishes only on its workers.dev hostname, and
+does not attach either production custom domain.
+
 Deployment is an operator action. Repository verification does not claim that
 Cloudflare branch protection, dashboards, alerts, or secret stores are
 configured.

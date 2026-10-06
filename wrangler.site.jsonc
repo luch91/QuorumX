@@ -35,5 +35,22 @@
       "enabled": true,
       "head_sampling_rate": 0.01
     }
+  },
+  "env": {
+    "staging": {
+      "name": "quorumx-web-v2-dev",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [],
+      "services": [
+        {
+          "binding": "QUORUMX_API",
+          "service": "quorumx-api-v2-dev"
+        }
+      ],
+      "vars": {
+        "QUORUMX_API_BASE": "https://quorumx-api-v2-dev.judithorluchee.workers.dev"
+      }
+    }
   }
 }

@@ -9,6 +9,10 @@ function secured(response, cacheControl) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+function fetchApi(env, request) {
+  return env.QUORUMX_API ? env.QUORUMX_API.fetch(request) : fetch(request);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -28,7 +32,7 @@ export default {
       const upstream = new URL(env.QUORUMX_API_BASE);
       upstream.pathname = url.pathname.slice("/api".length) || "/";
       upstream.search = url.search;
-      return secured(await fetch(new Request(upstream, request)));
+      return secured(await fetchApi(env, new Request(upstream, request)));
     }
 
     const record = url.pathname.match(/^\/proposals\/([^/]+)$/);
@@ -38,7 +42,7 @@ export default {
       const upstream = new URL(`/v1/proposals/${encodeURIComponent(canonicalId)}`, env.QUORUMX_API_BASE);
       const [shell, proposalResponse] = await Promise.all([
         env.ASSETS.fetch(new Request(new URL("/", url), request)),
-        fetch(upstream, { headers: { accept: "application/json" } }),
+        fetchApi(env, new Request(upstream, { headers: { accept: "application/json" } })),
       ]);
       if (!proposalResponse.ok) return secured(new Response(proposalResponse.status === 404 ? "Proposal not found" : "Proposal temporarily unavailable", { status: proposalResponse.status }));
       const proposal = (await proposalResponse.json()).data;
