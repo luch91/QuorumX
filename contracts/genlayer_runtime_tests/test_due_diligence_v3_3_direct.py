@@ -214,3 +214,53 @@ def test_v33_accepts_bounded_dynamic_returned_fund_cardinality(
     assert claim["status"] == "unverified"
     assert record["returnedFundsState"] == "unavailable"
     assert direct_vm.run_validator() is True
+
+
+def set_governance_history_handler(vm, prior_amount):
+    prior_id = "0x" + "a" * 64
+    body = (f"Snapshot proposal https://snapshot.box/#/s:safe.eth/proposal/{prior_id} "
+            "requested 3M ARB.")
+    vm.clear_mocks()
+
+    def handler(request):
+        if "id_in" in request["url"]:
+            payload = {"data": {"proposals": [{
+                "id": prior_id, "title": "Prior allocation",
+                "body": f"Transfer {prior_amount} ARB to the grants program.",
+                "choices": ["For", "Against"], "state": "closed",
+                "space": {"id": "safe.eth"},
+            }]}}
+        else:
+            payload = {"data": {"proposal": {
+                "id": SOURCE["proposalId"], "title": "Follow-up", "body": body,
+                "choices": ["For", "Against"], "state": "active",
+                "space": {"id": "safe.eth"},
+            }}}
+        return {"ok": {"response": {"status": 200,
+            "headers": {"content-type": b"application/json"},
+            "body": json.dumps(payload).encode()}}}
+
+    vm._live_web_handler = handler
+
+
+def test_v33_governance_history_is_validator_retrieved_and_disagreement_rejects(
+        direct_vm, direct_deploy, direct_owner, direct_alice):
+    operator = "0x" + bytes(direct_alice).hex()
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(
+        "contracts/governance_due_diligence_v3_3.py",
+        operator,
+        json.dumps(["safe.eth"]),
+    )
+    set_governance_history_handler(direct_vm, "3M")
+    direct_vm.sender = direct_alice
+
+    record = json.loads(contract.assess(json.dumps(SOURCE), "direct-v33-history"))
+    claim = next(item for item in record["materialClaims"] if "requested 3M ARB" in item["claim"])
+    assert claim["status"] == "supported"
+    assert claim["evidence"] == ["proposal", "governance-history-1"]
+    assert record["externalEvidenceStates"]["governanceHistory"] == "retrieved"
+    assert direct_vm.run_validator() is True
+
+    set_governance_history_handler(direct_vm, "4M")
+    assert direct_vm.run_validator() is False

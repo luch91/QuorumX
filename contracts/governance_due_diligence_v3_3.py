@@ -49,6 +49,10 @@ METRIC_CLAIM = re.compile(
     r"no further funding|audited|confirmed via|verified via|signature was verified)\b", re.I,
 )
 SAFE_THRESHOLD = re.compile(r"\b(\d{1,2})\s*(?:/|of)\s*(\d{1,2})\b", re.I)
+SNAPSHOT_PROPOSAL_LINK = re.compile(
+    r"https://snapshot\.box/#/s:([a-z0-9][a-z0-9.-]*)/proposal/(0x[0-9a-f]{64})",
+    re.I,
+)
 
 _KECCAK_ROT = (
     (0, 36, 3, 41, 18), (1, 44, 10, 45, 2), (62, 6, 43, 15, 61),
@@ -204,14 +208,85 @@ def snapshot_url(proposal_id):
     return "https://hub.snapshot.org/graphql?query=" + quote(query, safe="") + "&variables=" + quote(canonical({"id": proposal_id}), safe="")
 
 
+def extract_governance_history_refs(material, space, current_proposal_id):
+    body = json.loads(material).get("body", "")
+    refs = []
+    for match in SNAPSHOT_PROPOSAL_LINK.finditer(body):
+        proposal_space = match.group(1).lower()
+        proposal_id = match.group(2).lower()
+        if proposal_space != space.lower() or proposal_id == current_proposal_id.lower() or proposal_id in refs:
+            continue
+        refs.append(proposal_id)
+        if len(refs) > 3:
+            raise ValueError("governance-history reference limit exceeded")
+    return refs
+
+
+def governance_history_url(proposal_ids):
+    query = "query Proposals($ids: [String!]) { proposals(where: { id_in: $ids }) { id title body choices state space { id } } }"
+    return "https://hub.snapshot.org/graphql?query=" + quote(query, safe="") + "&variables=" + quote(canonical({"ids": proposal_ids}), safe="")
+
+
+def fetch_governance_history(proposal_ids, space):
+    if not isinstance(proposal_ids, list) or not 1 <= len(proposal_ids) <= 3 or len(set(proposal_ids)) != len(proposal_ids):
+        raise ValueError("invalid governance-history proposal references")
+    response = gl.nondet.web.get(governance_history_url(proposal_ids))
+    proposals = json_response(response, "Snapshot governance history", 128000).get("data", {}).get("proposals")
+    if not isinstance(proposals, list) or len(proposals) != len(proposal_ids):
+        raise ValueError("Snapshot governance history is incomplete")
+    by_id = {}
+    for proposal in proposals:
+        if not isinstance(proposal, dict) or proposal.get("id", "").lower() not in proposal_ids \
+                or proposal.get("space", {}).get("id", "").lower() != space.lower():
+            raise ValueError("Snapshot governance-history identity mismatch")
+        proposal_id = proposal["id"].lower()
+        if proposal_id in by_id:
+            raise ValueError("duplicate Snapshot governance-history proposal")
+        normalized = {"id": proposal_id, "space": space.lower(),
+                      "title": bounded(proposal.get("title", ""), "history title", 300, optional=True),
+                      "body": bounded(proposal.get("body", ""), "history body", 32000, optional=True),
+                      "choices": proposal.get("choices", []), "state": bounded(proposal.get("state", ""), "history state", 32, optional=True)}
+        if not isinstance(normalized["choices"], list) or len(normalized["choices"]) > 20 \
+                or any(not isinstance(choice, str) or len(choice) > 200 for choice in normalized["choices"]):
+            raise ValueError("invalid Snapshot governance-history choices")
+        by_id[proposal_id] = normalized
+    return [by_id[proposal_id] for proposal_id in proposal_ids]
+
+
+def json_response(response, source_name, max_bytes):
+    if response.status != 200:
+        raise ValueError(source_name + " source returned a non-success HTTP status")
+    headers = getattr(response, "headers", {})
+    content_type = ""
+    if isinstance(headers, dict):
+        for name, value in headers.items():
+            normalized_name = name.decode("ascii", errors="ignore") if isinstance(name, bytes) else str(name)
+            if normalized_name.lower() == "content-type":
+                content_type = value.decode("ascii", errors="ignore") if isinstance(value, bytes) else str(value)
+                break
+    if content_type and not re.match(r"^application/(?:json|graphql-response\+json)(?:\s*;|$)", content_type, re.I):
+        raise ValueError(source_name + " response has invalid content type")
+    body = response.body
+    if not isinstance(body, (str, bytes)):
+        raise ValueError(source_name + " response body is invalid")
+    if len(body.encode("utf-8") if isinstance(body, str) else body) > max_bytes:
+        raise ValueError(source_name + " response exceeds limit")
+    try:
+        text = body.decode("utf-8") if isinstance(body, bytes) else body
+    except UnicodeDecodeError as error:
+        raise ValueError(source_name + " response is not valid UTF-8") from error
+    try:
+        parsed = json.loads(text)
+    except Exception as error:
+        raise ValueError(source_name + " response is not valid JSON") from error
+    if not isinstance(parsed, dict):
+        raise ValueError(source_name + " response must be a JSON object")
+    return parsed
+
+
 def fetch_proposal(source):
     response = gl.nondet.web.get(snapshot_url(source["proposalId"]))
-    if response.status != 200:
-        raise ValueError("Snapshot source returned a non-success HTTP status")
-    body = response.body.decode("utf-8") if isinstance(response.body, bytes) else str(response.body)
-    if len(body.encode("utf-8")) > 64000:
-        raise ValueError("Snapshot response exceeds limit")
-    proposal = json.loads(body).get("data", {}).get("proposal")
+    proposal = json_response(response, "Snapshot", 64000).get("data", {}).get("proposal")
     if not proposal or proposal.get("id") != source["proposalId"] or proposal.get("space", {}).get("id") != source["space"]:
         raise ValueError("Snapshot identity mismatch")
     material = canonical({"id": proposal["id"], "space": proposal["space"]["id"],
@@ -236,6 +311,15 @@ def _rpc_call(provider_url, method, params, request_id):
         if type(status) is not int or not 100 <= status <= 599:
             raise ValueError("rpc_" + provider_name + "_invalid_http_status")
         raise ValueError("rpc_" + provider_name + "_http_" + str(status))
+    headers = getattr(response, "headers", {})
+    if isinstance(headers, dict):
+        for name, value in headers.items():
+            normalized_name = name.decode("ascii", errors="ignore") if isinstance(name, bytes) else str(name)
+            if normalized_name.lower() != "content-type":
+                continue
+            content_type = value.decode("ascii", errors="ignore") if isinstance(value, bytes) else str(value)
+            if not re.match(r"^application/json(?:\s*;|$)", content_type, re.I):
+                raise ValueError("rpc_" + provider_name + "_invalid_content_type")
     try:
         body = response.body.decode("utf-8") if isinstance(response.body, bytes) else str(response.body)
     except Exception:
@@ -410,15 +494,7 @@ def fetch_returned_funds(table, safe_address):
 
     def get_json(url):
         response = gl.nondet.web.get(url)
-        if response.status != 200:
-            raise ValueError("Blockscout returned a non-success HTTP status")
-        body = response.body.decode("utf-8") if isinstance(response.body, bytes) else str(response.body)
-        if len(body.encode("utf-8")) > 200000:
-            raise ValueError("Blockscout response exceeds limit")
-        parsed = json.loads(body)
-        if not isinstance(parsed, dict):
-            raise ValueError("invalid Blockscout response")
-        return parsed
+        return json_response(response, "Blockscout", 200000)
 
     def micro_eth_from_wei(value):
         if not isinstance(value, str) or not re.fullmatch(r"\d{1,30}", value):
@@ -606,7 +682,8 @@ def classify_action(line):
 
 
 def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
-                        returned_funds=None, returned_funds_state="not_attempted", safe_failure_code=""):
+                        returned_funds=None, returned_funds_state="not_attempted", safe_failure_code="",
+                        governance_history=None, governance_history_state="not_attempted"):
     """Deterministic extraction; validators re-run this and compare all fields."""
     passages = split_passages(material)
     actions = []
@@ -616,6 +693,7 @@ def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
     return_table = extract_return_table(material)
     seen_external_claims = set()
     safe_address = safe_data["address"] if safe_data else ""
+    governance_history = governance_history if isinstance(governance_history, list) else []
     in_execution_plan = False
     for line in passages:
         text = plain_text(line)
@@ -646,9 +724,12 @@ def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
         if action and len(actions) < 6:
             actions.append(action)
             claims.append({"claim": action["summary"], "sourceExcerpt": line[:280], "counterExcerpt": "",
-                           "claimScope": "proposal_action", "status": "supported",
-                           "explanation": "This is an action stated in the proposal; it does not establish that the action was executed.",
-                           "evidence": ["proposal"], "confidence": "high", "verificationMethod": "proposal_presence_only"})
+                           "claimScope": "proposal_action", "proposalAssertion": True,
+                           "status": "not_applicable",
+                           "explanation": "The proposal states this requested action; external factual verification is not applicable and execution is not established.",
+                           "evidence": ["proposal"], "evidenceAuthority": ["primary"],
+                           "relatedActionIds": ["a" + str(len(actions))],
+                           "confidence": "high", "verificationMethod": "proposal_presence_only"})
 
         is_safe_threshold = bool(SAFE_THRESHOLD.search(text) and "safe" in text.lower())
         is_external_claim = bool(METRIC_CLAIM.search(text)) and not action
@@ -670,24 +751,63 @@ def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
             explanation = ("The Safe on-chain state adapter could not retrieve or validate both RPC responses; this claim remains unverified."
                            if safe_adapter_state == "unavailable" else "No independent evidence adapter applies to this claim.")
             evidence = ["proposal"]
+            counter_excerpt = ""
+            verification_method = ""
             if safe_claim and safe_data and address_match.group(1).lower() == safe_address:
                 claimed = (int(threshold_match.group(1)), int(threshold_match.group(2)))
                 actual = (safe_data["threshold"], len(safe_data["owners"]))
-                status = "supported" if claimed == actual else "contradicted"
-                explanation = ("The proposal's stated Safe threshold was compared with getThreshold() and getOwners() at Ethereum block "
-                               + str(safe_data["blockNumber"]) + "; two fixed RPC providers returned matching state. Provider responses are not cryptographic proofs.")
+                matching_parts = int(claimed[0] == actual[0]) + int(claimed[1] == actual[1])
+                status = "supported" if matching_parts == 2 else "partially_supported" if matching_parts == 1 else "contradicted"
+                explanation = ("The proposal's stated Safe threshold and owner count were compared with getThreshold() and getOwners() at Ethereum block "
+                               + str(safe_data["blockNumber"]) + "; "
+                               + ("both components match." if status == "supported" else "the threshold matches but the owner count differs." if claimed[0] == actual[0] else "the owner count matches but the threshold differs." if status == "partially_supported" else "both components differ.")
+                               + " Two fixed RPC providers returned matching state; provider responses are not cryptographic proofs.")
                 evidence = ["proposal", "safe-rpc-publicnode", "safe-rpc-drpc"]
-            counter_excerpt = ""
-            verification_method = ""
+            history_match = SNAPSHOT_PROPOSAL_LINK.search(text)
+            amount_match = TRANSFER_AMOUNT.search(text)
+            if history_match and amount_match and history_match.group(1).lower() == json.loads(material).get("space", "").lower():
+                history_id = history_match.group(2).lower()
+                history_index = next((index for index, item in enumerate(governance_history)
+                                      if item.get("id") == history_id), -1)
+                if history_index >= 0:
+                    history_text = governance_history[history_index].get("title", "") + "\n" + governance_history[history_index].get("body", "")
+                    history_amounts = [(match.group("amount").replace(",", "").lower(), match.group("asset").upper())
+                                       for match in TRANSFER_AMOUNT.finditer(history_text)]
+                    claimed_amount = amount_match.group("amount").replace(",", "").lower()
+                    claimed_asset = amount_match.group("asset").upper()
+                    exact = (claimed_amount, claimed_asset) in history_amounts
+                    same_asset = any(asset == claimed_asset for _, asset in history_amounts)
+                    history_rejects = bool(re.search(
+                        r"\b(?:do not|does not|did not|not|never)\b.{0,50}\b(?:transfer|allocate|approve|fund)\b|\b(?:rejected|defeated)\b",
+                        history_text, re.I))
+                    claims_outcome = bool(re.search(
+                        r"\b(?:approved|passed|executed|transferred|returned|already)\b", text, re.I))
+                    status = ("contradicted" if exact and history_rejects else
+                              "partially_supported" if exact and claims_outcome else
+                              "supported" if exact else "contradicted" if same_asset else "unverified")
+                    explanation = ("The referenced Snapshot proposal explicitly rejects the stated action."
+                                   if exact and history_rejects else
+                                   "The referenced Snapshot proposal contains the same amount and asset, but proposal text alone does not establish approval or execution."
+                                   if exact and claims_outcome else
+                                   "The referenced Snapshot proposal contains the same requested amount and asset."
+                                   if exact else "The referenced Snapshot proposal contains a different amount for the same asset."
+                                   if same_asset else "The referenced Snapshot proposal was retrieved, but no comparable amount for the stated asset was identified.")
+                    evidence = ["proposal", "governance-history-" + str(history_index + 1)]
+                    counter_excerpt = plain_text(history_text)[:280]
+                    verification_method = "snapshot_governance_history_amount_comparison_v1"
             if safe_claim and safe_data and address_match.group(1).lower() == safe_address:
                 counter_excerpt = (str(safe_data["threshold"]) + "/" + str(len(safe_data["owners"]))
                                    + " threshold and owners reported by two Ethereum RPC providers at block "
                                    + str(safe_data["blockNumber"]))
                 verification_method = "ethereum_mainnet_dual_rpc_safe_config_comparison_v1"
             claims.append({"claim": text[:280], "sourceExcerpt": line[:280], "counterExcerpt": counter_excerpt,
-                           "claimScope": "external_factual", "status": status,
+                           "claimScope": "external_factual", "proposalAssertion": True, "status": status,
                            "explanation": explanation, "evidence": evidence,
-                           "confidence": "medium" if status in ("supported", "contradicted") else "low",
+                           "evidenceAuthority": ["primary", "secondary"] if any(
+                               evidence_id.startswith("safe-rpc-") or evidence_id.startswith("return-tx-")
+                               for evidence_id in evidence) else ["primary"],
+                           "relatedActionIds": [],
+                           "confidence": "medium" if status in ("supported", "partially_supported", "contradicted") else "low",
                            "verificationMethod": verification_method})
         if re.search(r"\b(multisig|threshold|milestone|clawback|refund|recover|recovery|oversight|reviewer|timelock|escrow)\b", text, re.I) and len(safeguards) < 8:
             linked_actions = ["a" + str(index + 1) for index, action in enumerate(actions)
@@ -723,8 +843,11 @@ def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
             confidence = "low"
         claims.append({"claim": "The proposal reports " + return_table["totalEth"] + " ETH returned to the DAO Safe in " + str(len(return_table["rows"])) + " transactions.",
                        "sourceExcerpt": return_table["totalExcerpt"], "counterExcerpt": counter_excerpt,
-                       "claimScope": "external_factual", "status": "supported" if verified else "unverified",
-                       "explanation": explanation, "evidence": claim_evidence, "confidence": confidence,
+                       "claimScope": "external_factual", "proposalAssertion": True,
+                       "status": "supported" if verified else "unverified",
+                       "explanation": explanation, "evidence": claim_evidence,
+                       "evidenceAuthority": ["primary", "secondary"] if verified else ["primary"],
+                       "relatedActionIds": [], "confidence": confidence,
                        "verificationMethod": verification_method})
 
     for safeguard in safeguards:
@@ -734,40 +857,103 @@ def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
                                          or len(actions) == 1]
 
     safeguard_gaps = []
-    expected = []
-    if any(item["kind"] == "treasury_transfer" for item in actions):
-        expected = [("recovery", r"clawback|refund|recover|return|unused funds"),
-                    ("independent_verification", r"independent.{0,40}(verif|review|audit)|third.party")]
     full_text = "\n".join(passages)
-    transfer_actions = [(index, action) for index, action in enumerate(actions) if action["kind"] == "treasury_transfer"]
+    treasury_expected = [
+        ("recipient", r"\b(?:recipient|beneficiary|payee|to\s+0x[0-9a-f]{40})\b"),
+        ("custody", r"\b(?:custody|custodian|escrow|safe|multisig)\b"),
+        ("multisig", r"\b(?:multisig|\d{1,2}\s*(?:/|of)\s*\d{1,2})\b"),
+        ("milestones", r"\bmilestones?\b"),
+        ("tranche_schedule", r"\b(?:tranches?|disbursement schedule|release schedule)\b"),
+        ("recovery", r"\b(?:clawback|refund|recover|recovery|return mechanism)\b"),
+        ("unused_funds", r"\b(?:unused|unspent|remaining)\s+funds?\b"),
+        ("independent_verification", r"\b(?:independent.{0,40}(?:verif|review|audit)|third.party)\b"),
+        ("spending_restrictions", r"\b(?:spending restrictions?|restricted use|use of funds|may only be used)\b"),
+    ]
+    permission_expected = [
+        ("role_recipient", r"\b(?:recipient|holder|council|role granted to|permission granted to)\b"),
+        ("role_scope", r"\b(?:role scope|permission scope|limited to|upgrade permission|admin permission)\b"),
+        ("timelock", r"\btimelock|\b\d+\s*(?:hour|day)s?\s+(?:delay|timelock)\b"),
+        ("multisig", r"\b(?:multisig|\d{1,2}\s*(?:/|of)\s*\d{1,2})\b"),
+        ("revocation", r"\b(?:revoke|revoked|revocation|remove the role)\b"),
+        ("expiry", r"\b(?:expires?|expiry|sunset|until\s+\d{4})\b"),
+        ("upgrade_controls", r"\b(?:upgrade controls?|proxy admin|implementation control)\b"),
+    ]
+    governance_expected = [
+        ("quorum_effect", r"\bquorum\b"),
+        ("voting_threshold", r"\b(?:voting threshold|approval threshold|supermajority)\b"),
+        ("delegation_effects", r"\bdelegat(?:e|ion|ing)\b"),
+        ("emergency_override", r"\b(?:emergency override|guardian override|emergency veto)\b"),
+        ("reversibility", r"\b(?:revers(?:e|ed|ible)|rollback|restore the prior rule)\b"),
+        ("migration", r"\b(?:migration|migrate|transition mechanism)\b"),
+    ]
     for action_index, action in enumerate(actions):
-      if action["kind"] != "treasury_transfer":
+      if action["kind"] in ("treasury_transfer", "treasury_distribution"):
+        family = "treasury"
+        expected = treasury_expected
+      elif action["kind"] == "control_change" and re.search(
+              r"\b(?:quorum|voting threshold|delegat(?:e|ion|ing)|governance rule)\b",
+              action["sourceExcerpt"], re.I):
+        family = "governance"
+        expected = governance_expected
+      elif action["kind"] == "control_change":
+        family = "permission"
+        expected = permission_expected
+      else:
         continue
+      family_actions = [item for item in actions if
+                        (family == "treasury" and item["kind"] in ("treasury_transfer", "treasury_distribution"))
+                        or (family == "governance" and item["kind"] == "control_change" and re.search(
+                            r"\b(?:quorum|voting threshold|delegat(?:e|ion|ing)|governance rule)\b", item["sourceExcerpt"], re.I))
+                        or (family == "permission" and item["kind"] == "control_change" and not re.search(
+                            r"\b(?:quorum|voting threshold|delegat(?:e|ion|ing)|governance rule)\b", item["sourceExcerpt"], re.I))]
       for name, pattern in expected:
         scoped = [line for line in passages if (action["sourceExcerpt"] == line[:240])
                   or (action["target"] and action["target"].lower() in line.lower())]
-        scope_text = full_text if len(transfer_actions) == 1 else "\n".join(scoped)
-        if len(transfer_actions) > 1 and not scoped:
+        scope_text = full_text if len(actions) == 1 else "\n".join(scoped)
+        pattern_lines = [line for line in passages if re.search(pattern, line, re.I)]
+        pattern_attributed_elsewhere = any(
+            other_index != action_index and any(
+                other["sourceExcerpt"] == line[:240]
+                or (other["target"] and other["target"].lower() in line.lower())
+                for line in pattern_lines)
+            for other_index, other in enumerate(actions))
+        if name == "recipient" and action["target"]:
+            state = "present"
+            scope = "recipient extracted from the action passage"
+        elif pattern_lines and not re.search(pattern, scope_text, re.I) and not pattern_attributed_elsewhere:
+            state = "unknown"
+            scope = "safeguard language exists but could not be attributed to this specific action"
+        elif len(family_actions) > 1 and not scoped:
             state = "unknown"
             scope = "safeguard could not be attributed to this specific action"
-        elif (re.search(r"\b(?:no|without|lacks?|absent)\b.{0,60}" + pattern, scope_text, re.I)
-              or re.search(pattern + r".{0,60}\b(?:does not exist|do not exist|will not apply|is not provided|is not available|is absent)\b", scope_text, re.I)):
+        elif (re.search(r"\b(?:no|without|lacks?|absent)\b.{0,60}(?:" + pattern + r")", scope_text, re.I)
+              or re.search(r"(?:" + pattern + r").{0,60}\b(?:does not exist|do not exist|will not apply|is not provided|is not available|is absent)\b", scope_text, re.I)):
             state = "explicitly_absent"
-            scope = "complete validator-retrieved proposal material" if len(transfer_actions) == 1 else "material linked to action"
+            scope = "complete validator-retrieved proposal material" if len(family_actions) == 1 else "material linked to action"
         elif re.search(pattern, scope_text, re.I):
             state = "present"
-            scope = "complete validator-retrieved proposal material" if len(transfer_actions) == 1 else "material linked to action"
+            scope = "complete validator-retrieved proposal material" if len(family_actions) == 1 else "material linked to action"
         else:
             state = "not_identified"
-            scope = "complete validator-retrieved proposal material" if len(transfer_actions) == 1 else "material linked to action"
+            scope = "complete validator-retrieved proposal material" if len(family_actions) == 1 else "material linked to action"
+        explanation = ("The reviewed material explicitly states this safeguard is absent." if state == "explicitly_absent"
+                       else "This safeguard was identified in the reviewed material." if state == "present"
+                       else "This safeguard was not identified in the reviewed material; this is not proof that it does not exist." if state == "not_identified"
+                       else "The reviewed material did not support attribution of this safeguard to the specific action.")
         safeguard_gaps.append({"safeguard": name, "state": state, "scope": scope,
+                               "explanation": explanation, "confidence": "high" if state in ("present", "explicitly_absent") else "medium" if state == "not_identified" else "low",
                                "relatedActionIds": ["a" + str(action_index + 1)], "evidence": ["proposal"]})
+
+    for action in actions:
+        reversibility_text = action["sourceExcerpt"] if len(actions) > 1 else full_text
+        action["reversible"] = reversibility_from_evidence(reversibility_text)
 
     return {"actions": actions, "claims": claims, "safeguards": safeguards,
             "safeguardGaps": safeguard_gaps, "safe": safe_data,
             "safeAdapterState": safe_adapter_state, "safeFailureCode": safe_failure_code,
             "executionPlan": execution_plan,
-            "returnedFunds": returned_funds, "returnedFundsState": returned_funds_state}
+            "returnedFunds": returned_funds, "returnedFundsState": returned_funds_state,
+            "governanceHistory": governance_history, "governanceHistoryState": governance_history_state}
 
 
 def summarize_action(action, incoming_signer):
@@ -775,6 +961,20 @@ def summarize_action(action, incoming_signer):
         nominee = " for " + incoming_signer.group(1) if incoming_signer else ""
         return "Replace a Safe signer" + nominee + " through the stated swapOwner() call."
     return plain_text(action["sourceExcerpt"])[:220]
+
+
+def reversibility_from_evidence(text):
+    if re.search(r"\bnot\s+(?:partially|partly)\s+reversible\b|\b(?:cannot|can not)\s+be\s+reversed\b", text, re.I):
+        return False
+    if re.search(r"\b(?:partially|partly)\s+reversible\b", text, re.I):
+        return "partial"
+    if re.search(r"\b(?:irreversible|irrevocable|permanent and cannot be reversed)\b", text, re.I):
+        return False
+    affirmative = re.search(r"\b(?:can be reversed|is reversible|may be revoked|can be revoked|rollback mechanism|recovery mechanism)\b", text, re.I)
+    negated_mechanism = re.search(r"\b(?:no|without)\s+(?:rollback|recovery) mechanism\b|\b(?:rollback|recovery) mechanism\s+(?:is not|isn't|was not|wasn't)\s+(?:provided|available|included)\b", text, re.I)
+    if affirmative and not negated_mechanism:
+        return True
+    return "unknown"
 
 
 def build_report(facts, material, source, assessment_run_id):
@@ -805,10 +1005,25 @@ def build_report(facts, material, source, assessment_run_id):
                              "contentHash": digest(canonical(item)),
                              "verificationScope": "validator_retrieved_external_source",
                              "authority": "secondary", "structuredData": item})
+    if facts.get("governanceHistoryState") == "retrieved":
+        for index, item in enumerate(facts.get("governanceHistory", [])):
+            evidence.append({"id": "governance-history-" + str(index + 1),
+                             "type": "governance_history",
+                             "locator": "https://snapshot.box/#/s:" + item["space"] + "/proposal/" + item["id"],
+                             "description": "Validator-retrieved referenced Snapshot proposal",
+                             "contentHash": digest(canonical(item)),
+                             "verificationScope": "validator_retrieved_external_source",
+                             "authority": "primary", "structuredData": item})
 
     findings = []
     execution = []
     questions = []
+    report_safeguard_gaps = []
+    for gap_index, item in enumerate(facts["safeguardGaps"]):
+        related_findings = ["f" + action_id[1:] for action_id in item["relatedActionIds"]]
+        related_steps = ["s" + action_id[1:] for action_id in item["relatedActionIds"]]
+        report_safeguard_gaps.append({"id": "sg" + str(gap_index + 1), **item, "relatedFindingIds": related_findings,
+                                      "relatedExecutionStepIds": related_steps})
     full_text = "\n".join(split_passages(material))
     incoming_signer = re.search(r"(@[A-Za-z0-9_.-]+).{0,60}\b(?:new|incoming)\s+signer\b", full_text, re.I)
     for index, action in enumerate(facts["actions"]):
@@ -827,7 +1042,9 @@ def build_report(facts, material, source, assessment_run_id):
                 safeguards.append("Proposal states: " + source_text[:180] + ". Current configuration was not independently verified.")
             else:
                 safeguards.append(source_text[:220])
-        related_gaps = [item for item in facts["safeguardGaps"] if action_id in item["relatedActionIds"]]
+        related_gap_ids = [item["id"] for item in report_safeguard_gaps if action_id in item["relatedActionIds"]]
+        related_claim_ids = ["c" + str(claim_index + 1) for claim_index, claim in enumerate(facts["claims"])
+                             if action_id in claim.get("relatedActionIds", [])]
         target_is_safe = bool(action["target"] and facts["safe"] and action["target"].lower() == facts["safe"]["address"])
         human_dependencies = list(action.get("humanDependencies", []))
         if control_change and incoming_signer:
@@ -845,6 +1062,7 @@ def build_report(facts, material, source, assessment_run_id):
             technical_dependencies = []
         dependency_match = re.search(r"\b(?:subject to|requires?|depends? on|after|once)\b\s+(.{1,120})", action["sourceExcerpt"], re.I)
         dependency = action.get("dependency", "") or (dependency_match.group(1).strip(" .;,") if dependency_match else "")
+        reversible = action.get("reversible", "unknown")
         if transfer:
             summary = summarize_action(action, incoming_signer)
             impact = ("The proposal requests moving " + action["amount"] + " " + action["asset"]
@@ -912,19 +1130,19 @@ def build_report(facts, material, source, assessment_run_id):
                          "whyItMatters": why, "impact": impact,
                          "severity": severity, "confidence": "medium",
                          "evidence": finding_evidence, "existingSafeguards": safeguards,
-                         "safeguardGaps": related_gaps,
+                         "safeguardGapIds": related_gap_ids,
                          "humanDependencies": human_dependencies,
                          "technicalDependencies": technical_dependencies,
-                         "reversible": "unknown", "uncertainty": "Only explicitly evidenced execution details are included.",
-                         "relatedActionIds": [action_id],
+                         "reversible": reversible, "uncertainty": "Only explicitly evidenced execution details are included.",
+                         "relatedActionIds": [action_id], "relatedClaimIds": related_claim_ids,
                          "consensus": {"state": "accepted", "method": "independent_structured_derivation_v3_3"}})
         execution.append({"id": "s" + str(index + 1), "order": index + 1,
                           "action": summary, "actor": action["actor"], "target": action["target"],
                           "asset": action["asset"], "amount": action["amount"],
                           "dependency": dependency, "impact": impact, "humanDependencies": human_dependencies,
                           "technicalDependencies": technical_dependencies,
-                          "reversible": "unknown", "evidence": finding_evidence,
-                          "relatedActionIds": [action_id]})
+                          "reversible": reversible, "evidence": finding_evidence,
+                          "relatedActionIds": [action_id], "relatedClaimIds": related_claim_ids})
         if transfer and action["target"]:
             questions.append({"id": "q" + str(len(questions) + 1),
                               "question": "What execution path follows the initial transfer to " + action["target"] + "?",
@@ -950,7 +1168,7 @@ def build_report(facts, material, source, assessment_run_id):
                           "dependency": "", "impact": impact, "humanDependencies": human,
                           "technicalDependencies": technical, "reversible": "unknown", "evidence": ["proposal"]})
 
-    for item in facts["safeguardGaps"]:
+    for item in report_safeguard_gaps:
         if item["state"] in ("not_identified", "explicitly_absent") and len(questions) < 6:
             questions.append({"id": "q" + str(len(questions) + 1),
                               "question": "What is the " + item["safeguard"] + " arrangement?",
@@ -962,9 +1180,22 @@ def build_report(facts, material, source, assessment_run_id):
                           "question": "What concrete action is this proposal requesting?",
                           "whyItMatters": "No bounded execution action could be established by the current extraction rules.",
                           "relatedFindingIds": [], "evidenceGap": "Action not established; review the original proposal."})
+    for question in questions:
+        related_findings = question.get("relatedFindingIds", [])
+        related_actions = question.get("relatedActionIds", [])
+        if not related_actions:
+            related_actions = ["a" + finding_id[1:] for finding_id in related_findings
+                               if re.fullmatch(r"f[1-9][0-9]*", finding_id)]
+        question["relatedActionIds"] = related_actions
+        question["relatedExecutionStepIds"] = ["s" + action_id[1:] for action_id in related_actions]
+        question["relatedClaimIds"] = ["c" + str(index + 1) for index, claim in enumerate(facts["claims"])
+                                       if any(action_id in claim.get("relatedActionIds", []) for action_id in related_actions)]
     questions = questions[:6]
     contradicted = any(item["claimScope"] == "external_factual" and item["status"] == "contradicted" for item in facts["claims"])
-    priority = "urgent" if any(f["severity"] == "critical" for f in findings) else "high" if any(f["severity"] == "high" for f in findings) or contradicted else "normal" if findings or questions else "low"
+    control_change = any(item["kind"] == "control_change" for item in facts["actions"])
+    unresolved_recovery = any(item["safeguard"] == "recovery" and item["state"] in ("not_identified", "explicitly_absent")
+                              for item in facts["safeguardGaps"])
+    priority = "urgent" if any(f["severity"] == "critical" for f in findings) else "high" if any(f["severity"] == "high" for f in findings) or contradicted or control_change or len(questions) >= 3 else "normal" if findings or questions else "low"
     priority_reasons = []
     if any(item["kind"] == "treasury_transfer" for item in facts["actions"]):
         priority_reasons.append("a treasury transfer is proposed")
@@ -974,6 +1205,8 @@ def build_report(facts, material, source, assessment_run_id):
         priority_reasons.append("a Safe or governance control change is proposed")
     if contradicted:
         priority_reasons.append("a material external claim conflicts with retrieved evidence")
+    if unresolved_recovery:
+        priority_reasons.append("a recovery mechanism is explicitly absent or was not identified")
     if questions:
         priority_reasons.append("material execution details remain unresolved")
     reason = (priority.capitalize() + " review priority because " + "; ".join(priority_reasons[:3]) + ". This is a human-attention cue, not a voting recommendation.") if priority_reasons else "Low review priority: no structured material issue was identified in the reviewed evidence; inspect the original proposal for context."
@@ -994,10 +1227,13 @@ def build_report(facts, material, source, assessment_run_id):
                            "assetsAffected": [x["amount"] + " " + x["asset"] for x in facts["actions"] if x["asset"]],
                            "permissionsChanged": [], "controlChanges": [action_summaries[index] for index, item in enumerate(facts["actions"]) if item["kind"] == "control_change"]},
               "evidence": evidence, "externalEvidenceState": facts["safeAdapterState"],
+              "externalEvidenceStates": {"safe": facts["safeAdapterState"],
+                                         "returnedFunds": facts.get("returnedFundsState", "not_attempted"),
+                                         "governanceHistory": facts.get("governanceHistoryState", "not_attempted")},
               "externalEvidenceFailureCode": facts.get("safeFailureCode", ""),
               "returnedFundsState": facts.get("returnedFundsState", "not_attempted"),
               "materialActions": material_actions, "materialClaims": claims, "findings": findings,
-              "safeguardGaps": facts["safeguardGaps"], "executionMap": execution,
+              "safeguardGaps": report_safeguard_gaps, "executionMap": execution,
               "unresolvedQuestions": questions, "reviewPriority": priority,
               "reviewPriorityExplanation": reason, "assessedAt": gl.message_raw["datetime"],
               "provenance": "live", "consensus": {"state": "accepted", "method": "independent_structured_derivation_v3_3"}}
@@ -1111,6 +1347,7 @@ class GovernanceDueDiligenceV33(gl.Contract):
         material = gl.eq_principle.strict_eq(fetch_agreed_material)
         passages = split_passages(material)
         safe_candidate = safe_candidate_from_material(material)
+        history_refs = extract_governance_history_refs(material, source["space"], source["proposalId"])
 
         def derive(block_pin=None):
             safe_data = None
@@ -1143,7 +1380,16 @@ class GovernanceDueDiligenceV33(gl.Contract):
                             returned_state = "unavailable"
             except Exception:
                 returned_state = "unavailable"
-            return derive_record_facts(material, safe_data, safe_state, returned_funds, returned_state, safe_failure_code)
+            governance_history = []
+            governance_history_state = "not_attempted"
+            if history_refs:
+                try:
+                    governance_history = fetch_governance_history(history_refs, source["space"])
+                    governance_history_state = "retrieved"
+                except Exception:
+                    governance_history_state = "unavailable"
+            return derive_record_facts(material, safe_data, safe_state, returned_funds, returned_state,
+                                       safe_failure_code, governance_history, governance_history_state)
 
         def validate(leader_result):
             if not isinstance(leader_result, gl.vm.Return):
