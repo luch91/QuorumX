@@ -191,13 +191,24 @@ def bounded(value, field, limit, optional=False):
 
 
 def source_for(raw):
-    if not isinstance(raw, str) or len(raw) > 4096:
+    if not isinstance(raw, (str, dict)):
         raise ValueError("invalid source")
-    source = json.loads(raw)
+    encoded = raw if isinstance(raw, str) else canonical(raw)
+    if len(encoded) > 4096:
+        raise ValueError("invalid source")
+    source = json.loads(raw) if isinstance(raw, str) else raw
     if not isinstance(source, dict) or set(source) != {"kind", "space", "proposalId"} or source.get("kind") != "snapshot":
         raise ValueError("v3 requires Snapshot source")
     space = bounded(source.get("space"), "space", 128)
-    proposal_id = bounded(source.get("proposalId"), "proposal ID", 128)
+    proposal_value = source.get("proposalId")
+    # The CLI recursively coerces 0x-prefixed JSON fields to uint256. Restore
+    # Snapshot's canonical 32-byte identifier; Worker string callers are
+    # unchanged. Booleans are excluded because bool is an int in Python.
+    if isinstance(proposal_value, int) and not isinstance(proposal_value, bool):
+        if proposal_value < 0 or proposal_value >= 2**256:
+            raise ValueError("invalid proposal ID")
+        proposal_value = "0x" + format(proposal_value, "064x")
+    proposal_id = bounded(proposal_value, "proposal ID", 128)
     if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", space) or not re.fullmatch(r"[A-Za-z0-9_-]+", proposal_id):
         raise ValueError("invalid Snapshot identity")
     return {"kind": "snapshot", "space": space, "proposalId": proposal_id}
@@ -1253,11 +1264,17 @@ class GovernanceDueDiligenceV33(gl.Contract):
     run_records: TreeMap[str, str]
     run_proposals: TreeMap[str, str]
 
-    def __init__(self, operator: str, allowed_spaces_json: str):
-        spaces = json.loads(allowed_spaces_json)
+    def __init__(self, operator: str, allowed_spaces_json):
+        # genlayer CLI decodes JSON array arguments before invoking the
+        # constructor, while existing Worker/deployment callers pass the same
+        # allowlist as a JSON string. Both forms describe the identical bounded
+        # value; validation below remains the authority boundary.
+        spaces = json.loads(allowed_spaces_json) if isinstance(allowed_spaces_json, str) else allowed_spaces_json
         if not isinstance(spaces, list) or not 1 <= len(spaces) <= 8 or len(set(spaces)) != len(spaces):
             raise gl.vm.UserError("invalid Snapshot space allowlist")
-        checked_operator = bounded(operator, "operator", 42)
+        # CLI address arguments arrive as GenLayer Address values. Normalize to
+        # the same canonical textual representation used by Worker callers.
+        checked_operator = bounded(str(operator), "operator", 42)
         if (not re.fullmatch(r"0x[0-9a-fA-F]{40}", checked_operator)
                 or checked_operator.lower() == "0x" + "0" * 40):
             raise gl.vm.UserError("invalid operator address")

@@ -32,36 +32,37 @@ jobs:
   contract:
     name: Intelligent Contract
     runs-on: ubuntu-latest
+    env:
+      GENVM_VERSION: v0.2.16
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-dev.txt
+          cache-dependency-path: |
+            requirements-dev.txt
+            requirements-genlayer-test.txt
       - run: python -m pip install -r requirements-dev.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/genvm-linter
+          key: genvm-v0.2.16-${{ runner.os }}-${{ runner.arch }}
       - run: python -m pytest contracts/tests -q
       - name: GenVM static safety lint
         run: |
           genvm-lint lint contracts/governance_risk.py --json
           genvm-lint lint contracts/governance_due_diligence.py --json
-      - name: GenVM semantic validation (known upstream artifact issue)
-        shell: bash
+          genvm-lint lint contracts/governance_due_diligence_v3_3.py --json
+      - name: GenVM semantic validation
         run: |
-          set +e
-          for contract in contracts/governance_risk.py contracts/governance_due_diligence.py; do
-            output="$(genvm-lint check "$contract" --json 2>&1)"
-            status=$?
-            printf '%s\n' "$output"
-            if [ "$status" -eq 0 ]; then
-              continue
-            fi
-            if printf '%s' "$output" | grep -q 'E101.*HTTP Error 404'; then
-              echo "::warning::genvm-linter semantic validation for $contract is blocked by upstream GenVM release asset 404; static lint passed."
-              continue
-            fi
-            exit "$status"
-          done
+          genvm-lint check contracts/governance_risk.py --json
+          genvm-lint check contracts/governance_due_diligence.py --json
+          genvm-lint check contracts/governance_due_diligence_v3_3.py --json
+      - name: GenLayer Direct Mode evidence-adapter tests
+        run: |
+          python -m pip install -r requirements-genlayer-test.txt
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -p gltest.direct.pytest_plugin contracts/genlayer_runtime_tests -q
 
   secrets:
     name: Secret scan

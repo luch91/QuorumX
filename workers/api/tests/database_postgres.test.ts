@@ -3,6 +3,10 @@ import { claimAssessmentJob, ingestSnapshotProposals } from "../src/database";
 import { snapshotSourceForSpace } from "../src/sources";
 import type { SnapshotProposal } from "../src/domain";
 
+// A full 125-proposal page sweep performs many real PostgreSQL round trips.
+// Keep the integration deterministic on containerized/remote CI databases.
+jest.setTimeout(30_000);
+
 const databaseUrl = process.env.QUORUMX_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
 

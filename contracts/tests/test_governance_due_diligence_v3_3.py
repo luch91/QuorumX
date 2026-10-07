@@ -481,6 +481,26 @@ class DueDiligenceV33Test(unittest.TestCase):
         with self.assertRaisesRegex(UserError, "invalid operator"):
             self.m.GovernanceDueDiligenceV33("0x" + "0" * 40, json.dumps(["safe.eth"]))
 
+    def test_constructor_accepts_cli_typed_space_array(self):
+        class CliAddress:
+            def __str__(self):
+                return "0x" + "1" * 40
+        operator = CliAddress()
+        contract = self.m.GovernanceDueDiligenceV33(
+            operator, ["balancer.eth", "safe.eth", "arbitrumfoundation.eth", "ens.eth"]
+        )
+        self.assertEqual(set(contract.allowed_spaces), {
+            "balancer.eth", "safe.eth", "arbitrumfoundation.eth", "ens.eth"
+        })
+
+    def test_source_accepts_cli_typed_object_without_changing_identity(self):
+        source = {"kind": "snapshot", "space": "safe.eth", "proposalId": "proposal_1"}
+        self.assertEqual(self.m.source_for(source), source)
+        self.assertEqual(self.m.source_for(json.dumps(source)), source)
+        hex_id = "0x" + "a" * 64
+        cli_source = {"kind": "snapshot", "space": "safe.eth", "proposalId": int(hex_id, 16)}
+        self.assertEqual(self.m.source_for(cli_source)["proposalId"], hex_id)
+
     def test_returned_fund_tables_accept_one_through_five_unique_rows(self):
         safe_address = "0x" + "8" * 40
         safe = {

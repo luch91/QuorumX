@@ -159,7 +159,7 @@
     const safeguardById = Object.fromEntries((assessment.safeguardGaps ?? []).map((item) => [item.id, item]));
     const isV3 = assessment.assessmentVersion === "3";
     const factualClaims = isV3 ? claims.filter((claim) => claim.claimScope === "external_factual") : claims;
-    const proposalAssertions = isV3 ? claims.filter((claim) => claim.claimScope === "proposal_action").length : 0;
+    const proposalAssertions = isV3 ? claims.filter((claim) => claim.proposalAssertion === true || claim.claimScope === "proposal_action").length : 0;
     const claimCounts = factualClaims.reduce((counts, claim) => { counts[claim.status] = (counts[claim.status] ?? 0) + 1; return counts; }, {});
     const rpcFailure = assessment.externalEvidenceFailureCode ?? "";
     const rpcFailureLabel = /^rpc_(publicnode|drpc)_http_([1-5]\d\d)$/.exec(rpcFailure);
