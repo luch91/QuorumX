@@ -8,9 +8,56 @@ const {
   assessmentSignal,
   renderDueDiligence,
   sourceCard,
+  particleLayout,
+  particleOrigin,
 } = require("../app.js");
 
 describe("QuorumX frontend helpers", () => {
+  describe("particle hero layout contract", () => {
+    test.each([
+      [1440, 420, "desktop", [0.4, 0.55, 0.7, 0.85]],
+      [1024, 560, "tablet", [0.4, 0.55, 0.7, 0.85]],
+      [768, 560, "mobile", [0.13, 0.38, 0.63, 0.88]],
+      [390, 690, "mobile", [0.13, 0.38, 0.63, 0.88]],
+      [320, 690, "mobile", [0.13, 0.38, 0.63, 0.88]],
+    ])("selects a bounded %s px hero profile", (width, height, profile, centerRatios) => {
+      const layout = particleLayout(width, height);
+
+      expect(layout.profile).toBe(profile);
+      expect(layout.centerRatios).toEqual(centerRatios);
+      expect(layout.centers).toHaveLength(4);
+      expect(layout.centers.every((center) => center > 0 && center < width)).toBe(true);
+      expect(layout.centers).toEqual([...layout.centers].sort((left, right) => left - right));
+      expect(layout.logoY).toBeGreaterThan(0);
+      expect(layout.logoY).toBeLessThan(height);
+      expect(layout.logoScale).toBeGreaterThan(0);
+      expect(layout.centers[0] - 80 * layout.logoScale).toBeGreaterThanOrEqual(layout.artworkStartX);
+    });
+
+    test("records bounded particle density for animated and reduced-motion layouts", () => {
+      expect(particleLayout(1440, 420).cloudParticleCount).toBe(5600);
+      expect(particleLayout(1440, 420, true).cloudParticleCount).toBe(3000);
+      expect(particleLayout(1440, 420).logoParticleCount).toBe(680);
+    });
+
+    test.each([[0, 690], [390, 0], [-1, 690], [390, -1]])
+      ("defers particle initialization for invalid bounds %i by %i", (width, height) => {
+        expect(particleLayout(width, height)).toBeNull();
+      });
+
+    test("places reduced-motion particles directly at their final targets", () => {
+      expect(particleOrigin({ targetX: 120, targetY: 240, width: 390, height: 690, reducedMotion: true }))
+        .toEqual({ x: 120, y: 240 });
+    });
+
+    test("uses the supplied random source for animated particle origins", () => {
+      const values = [0.25, 0.75];
+      expect(particleOrigin({ targetX: 120, targetY: 240, width: 400, height: 600,
+        reducedMotion: false, random: () => values.shift() }))
+        .toEqual({ x: 100, y: 450 });
+    });
+  });
+
   test("builds bounded API queries from supported filters", () => {
     expect(buildProposalQuery({ status: "active", dao: "SafeDAO", ignored: "no" }, "40"))
       .toBe("https://api.quorumx.dev/v1/proposals?limit=24&status=active&dao=SafeDAO&cursor=40");

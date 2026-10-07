@@ -33,6 +33,27 @@
     ? `${titleCase(proposal.reviewPriority)} review · ${proposal.findingCount ?? proposal.dueDiligence?.findings?.length ?? 0} findings`
     : proposal.riskLevel ? "Legacy risk assessment" : "Not yet reviewed";
 
+  function particleLayout(width, height, reducedMotion = false) {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const profile = width < 820 ? "mobile" : width < 1100 ? "tablet" : "desktop";
+    const mobile = profile === "mobile";
+    const centerRatios = mobile ? [0.13, 0.38, 0.63, 0.88] : [0.4, 0.55, 0.7, 0.85];
+    return {
+      profile,
+      centerRatios,
+      centers: centerRatios.map((center) => width * center),
+      artworkStartX: mobile ? 0 : width * 0.32,
+      logoY: height * (mobile ? 0.73 : 0.41),
+      logoScale: Math.min(width * (mobile ? 0.18 : 0.095), mobile ? 90 : 132) / 160,
+      logoParticleCount: 680,
+      cloudParticleCount: reducedMotion ? 3000 : 5600,
+    };
+  }
+
+  function particleOrigin({ targetX, targetY, width, height, reducedMotion, random = Math.random }) {
+    return reducedMotion ? { x: targetX, y: targetY } : { x: random() * width, y: random() * height };
+  }
+
   function buildProposalQuery(filters = {}, cursor, limit = 24) {
     const params = new URLSearchParams({ limit: String(limit) });
     ["status", "assessment", "ecosystem", "author", "source", "dao", "space"].forEach((key) => {
@@ -335,15 +356,17 @@
 
     function placeLogos() {
       logoParticles = [];
+      const layout = particleLayout(width, height, reduced);
+      if (!layout) return;
       logoMasks.forEach((mask, markIndex) => {
         if (!mask.length) return;
-        const mark = marks[markIndex], mobile = width < 820, centers = mobile ? [.13, .38, .63, .88] : marks.map((item) => item.center);
-        const count = 680, scale = Math.min(width * (mobile ? .18 : .095), mobile ? 90 : 132) / 160;
+        const count = layout.logoParticleCount;
         for (let index = 0; index < count; index += 1) {
           const point = mask[Math.floor(index * mask.length / count) % mask.length];
-          const targetX = width * centers[markIndex] + point.x * scale;
-          const targetY = height * (mobile ? .73 : .41) + point.y * scale;
-          logoParticles.push({ x: reduced ? targetX : Math.random() * width, y: reduced ? targetY : Math.random() * height, targetX, targetY, speed: .055 + Math.random() * .025, phase: Math.random() * Math.PI * 2, size: .7 + Math.random() * 1.25 });
+          const targetX = layout.centers[markIndex] + point.x * layout.logoScale;
+          const targetY = layout.logoY + point.y * layout.logoScale;
+          const origin = particleOrigin({ targetX, targetY, width, height, reducedMotion: reduced });
+          logoParticles.push({ ...origin, targetX, targetY, speed: .055 + Math.random() * .025, phase: Math.random() * Math.PI * 2, size: .7 + Math.random() * 1.25 });
         }
       });
     }
@@ -351,9 +374,11 @@
     function resize() {
       const rect = canvas.getBoundingClientRect(), ratio = Math.min(devicePixelRatio || 1, 2);
       const nextWidth = Math.round(rect.width), nextHeight = Math.round(rect.height);
+      const layout = particleLayout(nextWidth, nextHeight, reduced);
+      if (!layout) return;
       if (nextWidth === width && nextHeight === height && cloud.length) return;
       width = nextWidth; height = nextHeight; canvas.width = width * ratio; canvas.height = height * ratio; context.setTransform(ratio,0,0,ratio,0,0);
-      cloud = Array.from({ length: reduced ? 3000 : 5600 }, () => {
+      cloud = Array.from({ length: layout.cloudParticleCount }, () => {
         const x = width * (.19 + Math.random() * .82), progress = x / width;
         const centerY = height * (.37 + .055 * Math.sin(progress * 7.2) + .02 * Math.sin(progress * 15.5));
         const y = centerY + normalRandom() * height * .085;
@@ -401,5 +426,5 @@
   }
 
   return { init, buildProposalQuery, proposalMatchesSearch, daysUntil, short, safeHttpUrl,
-    assessmentLabel, assessmentSignal, renderDueDiligence, sourceCard };
+    assessmentLabel, assessmentSignal, renderDueDiligence, sourceCard, particleLayout, particleOrigin };
 });
