@@ -1,4 +1,16 @@
-import { getDueDiligenceV3, listProposals } from "../src/api";
+import { getDueDiligenceV3, listProposals, listSources } from "../src/api";
+
+describe("source coverage API", () => {
+  it("exposes fixed-point scan progress and durable assessment backlog", async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    await listSources(client as never);
+    const sql = client.query.mock.calls[0][0];
+    expect(sql).toContain("coverageState");
+    expect(sql).toContain("scanGeneration");
+    expect(sql).toContain("backlogCount");
+    expect(sql).toContain("oldestBacklogAt");
+  });
+});
 
 describe("proposal API filters", () => {
   it("normalizes and binds DAO, author, assessment, and ecosystem filters", async () => {

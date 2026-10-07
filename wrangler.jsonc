@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "QUORUMX_SNAPSHOT_SPACES": "balancer.eth,safe.eth,arbitrumfoundation.eth,ens.eth",
-    "QUORUMX_SNAPSHOT_LIMIT": "20",
+    "QUORUMX_SNAPSHOT_LIMIT": "50",
     "QUORUMX_ENABLE_WRITES": "true",
     "QUORUMX_GENLAYER_NETWORK": "studionet",
     "QUORUMX_GENLAYER_RPC_URL": "https://studio.genlayer.com/api",
@@ -52,8 +52,8 @@
       "name": "quorumx-api-v2-dev",
       "routes": [],
       "vars": {
-        "QUORUMX_SNAPSHOT_SPACES": "balancer.eth",
-        "QUORUMX_SNAPSHOT_LIMIT": "20",
+        "QUORUMX_SNAPSHOT_SPACES": "balancer.eth,safe.eth,arbitrumfoundation.eth,ens.eth",
+        "QUORUMX_SNAPSHOT_LIMIT": "50",
         "QUORUMX_ENABLE_WRITES": "false",
         "QUORUMX_GENLAYER_NETWORK": "studionet",
         "QUORUMX_GENLAYER_RPC_URL": "https://studio.genlayer.com/api",

@@ -3,7 +3,7 @@ import { getAssessment, getDueDiligence, getDueDiligenceV3, getProposal, listPro
 import { runIndexerCycle } from "./cycle";
 import { withDatabase } from "./database";
 import { createReassessmentJob } from "./database";
-import { snapshotSourceForSpace } from "./sources";
+import { snapshotSourceForSpace, validateMultiDaoCoverage } from "./sources";
 
 const CONTRACT_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const PRIVATE_KEY = /^0x[0-9a-fA-F]{64}$/;
@@ -50,6 +50,7 @@ function cycleSettings(env: Env) {
   )];
   if (snapshotSpaces.length === 0) throw new Error("At least one Snapshot space is required");
   snapshotSpaces.forEach(snapshotSourceForSpace);
+  validateMultiDaoCoverage(snapshotSpaces);
   return {
     databaseUrl: env.HYPERDRIVE.connectionString,
     snapshotSpaces,
@@ -92,6 +93,7 @@ async function health(env: Env): Promise<Response> {
       const result = await client.query<{
         database_name: string; checked_at: string; sources: number; proposals: number;
         pending_jobs: number; submitted_jobs: number; last_success: string | null;
+        covered_sources: number; scanning_sources: number; oldest_backlog: string | null;
       }>(`
         select
           current_database() as database_name,
@@ -100,7 +102,15 @@ async function health(env: Env): Promise<Response> {
           (select count(*)::integer from quorumx.proposals) as proposals,
           (select count(*)::integer from quorumx.assessment_jobs where status in ('pending', 'retryable', 'processing')) as pending_jobs,
           (select count(*)::integer from quorumx.assessment_jobs where status = 'submitted') as submitted_jobs,
-          (select max(last_succeeded_at)::text from quorumx.sources where enabled) as last_success
+          (select max(last_succeeded_at)::text from quorumx.sources where enabled) as last_success,
+          (select count(*)::integer from quorumx.sources sources
+            join quorumx.poll_cursors cursors on cursors.source_id = sources.id
+            where sources.enabled and cursors.cursor ->> 'coverage' = 'covered') as covered_sources,
+          (select count(*)::integer from quorumx.sources sources
+            left join quorumx.poll_cursors cursors on cursors.source_id = sources.id
+            where sources.enabled and coalesce(cursors.cursor ->> 'coverage', 'scanning') = 'scanning') as scanning_sources,
+          (select min(created_at)::text from quorumx.assessment_jobs
+            where status in ('pending', 'retryable', 'processing')) as oldest_backlog
       `);
       return result.rows[0];
     });
@@ -114,6 +124,8 @@ async function health(env: Env): Promise<Response> {
         pendingJobs: state.pending_jobs,
         submittedJobs: state.submitted_jobs,
         lastSuccessfulPollAt: state.last_success,
+        coverage: { coveredSources: state.covered_sources, scanningSources: state.scanning_sources },
+        oldestBacklogAt: state.oldest_backlog,
       },
     });
   } catch (error) {

@@ -7,6 +7,7 @@ const {
   short,
   assessmentSignal,
   renderDueDiligence,
+  sourceCard,
 } = require("../app.js");
 
 describe("QuorumX frontend helpers", () => {
@@ -34,6 +35,17 @@ describe("QuorumX frontend helpers", () => {
     expect(safeHttpUrl("http://example.com")).toBe("#");
     expect(safeHttpUrl("javascript:alert(1)")).toBe("#");
     expect(safeHttpUrl("not a URL")).toBe("#");
+  });
+
+  test("renders escaped source coverage and backlog state", () => {
+    const html = sourceCard({ configuration: { space: "safe.eth" }, logoUrl: "javascript:bad",
+      displayName: "<SafeDAO>", ecosystems: ["ethereum"], coverageState: "scanning", scanGeneration: 3,
+      scanOffset: 50, backlogCount: 125, oldestBacklogAt: "2026-10-01T00:00:00Z", dailyAssessmentBudget: 1,
+      lastSucceededAt: "2026-10-07T00:00:00Z", homepageUrl: "https://safe.global" });
+    expect(html).toContain("Scanning · generation 3, offset 50");
+    expect(html).toContain("125 queued");
+    expect(html).toContain("&lt;SafeDAO&gt;");
+    expect(html).not.toContain("javascript:bad");
   });
 
   test("presents assessment and compact identity labels", () => {

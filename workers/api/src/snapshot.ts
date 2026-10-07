@@ -17,8 +17,15 @@ interface SnapshotRecord {
 }
 
 interface SnapshotPayload {
-  data?: { proposals?: SnapshotRecord[] };
+  data?: { proposals?: SnapshotRecord[]; active?: SnapshotRecord[]; pending?: SnapshotRecord[] };
   errors?: Array<{ message?: string }>;
+}
+
+export interface SnapshotPage {
+  proposals: SnapshotProposal[];
+  first: number;
+  skip: number;
+  exhausted: boolean;
 }
 
 function status(value?: string): ProposalStatus {
@@ -89,4 +96,65 @@ export async function fetchRecentSnapshotProposals(
   }
   const fetchedAt = new Date();
   return (payload.data?.proposals ?? []).map((proposal) => normalizeSnapshotProposal(proposal, fetchedAt));
+}
+
+async function fetchSnapshot(query: string, variables: Record<string, unknown>, fetcher: typeof fetch): Promise<{
+  proposals: SnapshotProposal[]; counts: { proposals: number; active: number; pending: number };
+}> {
+  const url = new URL(SNAPSHOT_ENDPOINT);
+  url.searchParams.set("query", query);
+  url.searchParams.set("variables", JSON.stringify(variables));
+  const response = await fetcher(url, {
+    method: "GET",
+    headers: { accept: "application/json", "user-agent": "QuorumX/0.3 (+https://quorumx.dev)" },
+  });
+  if (!response.ok) throw new Error(`Snapshot request failed with HTTP ${response.status}`);
+  const declaredLength = Number(response.headers.get("content-length") ?? "0");
+  if (declaredLength > MAX_RESPONSE_BYTES) throw new Error("Snapshot response exceeded the size limit");
+  const text = await response.text();
+  if (text.length > MAX_RESPONSE_BYTES) throw new Error("Snapshot response exceeded the size limit");
+  const payload = JSON.parse(text) as SnapshotPayload;
+  if (payload.errors?.length) throw new Error(`Snapshot query failed: ${payload.errors.map((error) => error.message ?? "unknown error").join("; ")}`);
+  const fetchedAt = new Date();
+  const records = [...(payload.data?.proposals ?? []), ...(payload.data?.active ?? []), ...(payload.data?.pending ?? [])];
+  return {
+    proposals: records.map((proposal) => normalizeSnapshotProposal(proposal, fetchedAt)),
+    counts: {
+      proposals: payload.data?.proposals?.length ?? 0,
+      active: payload.data?.active?.length ?? 0,
+      pending: payload.data?.pending?.length ?? 0,
+    },
+  };
+}
+
+export async function fetchOpenSnapshotProposalPage(
+  space: string, skip: number, fetcher: typeof fetch = fetch, limit = 50,
+): Promise<SnapshotPage> {
+  const first = Math.max(1, Math.min(limit, 50));
+  const boundedSkip = Number.isSafeInteger(skip) ? Math.max(0, Math.min(skip, 2_147_483_647)) : 0;
+  const fields = "id title body choices created start end state author space { id }";
+  const query = `query OpenPage($spaces: [String!]!, $first: Int!, $skip: Int!) {
+    active: proposals(first: $first, skip: $skip, where: { space_in: $spaces, state: "active" }, orderBy: "created", orderDirection: desc) {
+      ${fields}
+    }
+    pending: proposals(first: $first, skip: $skip, where: { space_in: $spaces, state: "pending" }, orderBy: "created", orderDirection: desc) {
+      ${fields}
+    }
+  }`;
+  const result = await fetchSnapshot(query, { spaces: [space], first, skip: boundedSkip }, fetcher);
+  return { proposals: result.proposals, first, skip: boundedSkip,
+    exhausted: result.counts.active < first && result.counts.pending < first };
+}
+
+export async function fetchSnapshotProposalsByIds(
+  space: string, proposalIds: string[], fetcher: typeof fetch = fetch,
+): Promise<SnapshotProposal[]> {
+  const ids = [...new Set(proposalIds)].slice(0, 50);
+  if (ids.length === 0) return [];
+  const query = `query Reconcile($spaces: [String!]!, $ids: [String!]!) {
+    proposals(first: 50, where: { space_in: $spaces, id_in: $ids }) {
+      id title body choices created start end state author space { id }
+    }
+  }`;
+  return (await fetchSnapshot(query, { spaces: [space], ids }, fetcher)).proposals;
 }

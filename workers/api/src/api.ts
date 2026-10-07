@@ -29,8 +29,22 @@ export async function listSources(client: Client): Promise<unknown> {
       poll_interval_seconds as "pollIntervalSeconds",
       last_polled_at as "lastPolledAt",
       last_succeeded_at as "lastSucceededAt",
-      last_error as "lastError"
+      last_error as "lastError",
+      coalesce(cursors.cursor ->> 'coverage', 'scanning') as "coverageState",
+      coalesce((cursors.cursor ->> 'generation')::integer, 1) as "scanGeneration",
+      coalesce((cursors.cursor ->> 'skip')::integer, 0) as "scanOffset",
+      cursors.cursor ->> 'lastCompletedAt' as "lastFullScanAt",
+      backlog.pending_count as "backlogCount",
+      backlog.oldest_created_at as "oldestBacklogAt"
     from quorumx.sources
+    left join quorumx.poll_cursors cursors on cursors.source_id = sources.id
+    left join lateral (
+      select count(*)::integer as pending_count, min(jobs.created_at) as oldest_created_at
+      from quorumx.assessment_jobs jobs
+      join quorumx.proposal_revisions revisions on revisions.id = jobs.revision_id
+      join quorumx.proposals proposals on proposals.id = revisions.proposal_id
+      where proposals.source_id = sources.id and jobs.status in ('pending', 'retryable', 'processing')
+    ) backlog on true
     order by source_key
   `);
   return { data: result.rows };

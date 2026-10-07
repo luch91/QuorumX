@@ -1,4 +1,4 @@
-import { fetchRecentSnapshotProposals, normalizeSnapshotProposal } from "../src/snapshot";
+import { fetchOpenSnapshotProposalPage, fetchRecentSnapshotProposals, fetchSnapshotProposalsByIds, normalizeSnapshotProposal } from "../src/snapshot";
 
 describe("Snapshot ingestion", () => {
   it("normalizes identity, dates, status, choices, and unique evidence links", () => {
@@ -45,5 +45,37 @@ describe("Snapshot ingestion", () => {
       { status: 200 },
     )) as typeof fetch;
     await expect(fetchRecentSnapshotProposals("balancer.eth", fetcher)).rejects.toThrow("bad query");
+  });
+
+  it("paginates only active and pending proposals with bounded offsets", async () => {
+    const fetcher = jest.fn(async (input: URL | RequestInfo) => {
+      const variables = JSON.parse(new URL(String(input)).searchParams.get("variables")!);
+      expect(variables).toEqual({ spaces: ["safe.eth"], first: 50, skip: 50 });
+      return new Response(JSON.stringify({ data: { active: Array.from({ length: 25 }, (_, index) => ({
+        id: `p${index + 50}`, title: "Open", body: "Body", state: "active",
+        author: "0x2222222222222222222222222222222222222222", space: { id: "safe.eth" },
+      })), pending: [] } }));
+    }) as typeof fetch;
+    const page = await fetchOpenSnapshotProposalPage("safe.eth", 50, fetcher, 50);
+    expect(page).toMatchObject({ first: 50, skip: 50, exhausted: true });
+    expect(page.proposals).toHaveLength(25);
+  });
+
+  it("reconciles a bounded unique set of exact proposal IDs", async () => {
+    const fetcher = jest.fn(async (input: URL | RequestInfo) => {
+      const variables = JSON.parse(new URL(String(input)).searchParams.get("variables")!);
+      expect(variables).toEqual({ spaces: ["ens.eth"], ids: ["old-1", "old-2"] });
+      return new Response(JSON.stringify({ data: { proposals: [] } }));
+    }) as typeof fetch;
+    await fetchSnapshotProposalsByIds("ens.eth", ["old-1", "old-1", "old-2"], fetcher);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cap durable scan progress at ten thousand proposals", async () => {
+    const fetcher = jest.fn(async (input: URL | RequestInfo) => {
+      expect(JSON.parse(new URL(String(input)).searchParams.get("variables")!).skip).toBe(10_050);
+      return new Response(JSON.stringify({ data: { active: [], pending: [] } }));
+    }) as typeof fetch;
+    await fetchOpenSnapshotProposalPage("safe.eth", 10_050, fetcher, 50);
   });
 });

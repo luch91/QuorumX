@@ -1,7 +1,10 @@
 jest.mock("../src/database", () => ({
+  advanceSnapshotReconciliation: jest.fn(),
   claimAssessmentJob: jest.fn(),
   finalizeAssessment: jest.fn(),
+  getSnapshotScanState: jest.fn(),
   ingestSnapshotProposals: jest.fn(),
+  listOpenSnapshotProposalIds: jest.fn(),
   listSubmittedJobs: jest.fn(),
   markJobRetry: jest.fn(),
   markSubmittedTerminal: jest.fn(),
@@ -17,18 +20,22 @@ jest.mock("../src/genlayer", () => ({
   submitAssessment: jest.fn(),
   submitDueDiligence: jest.fn(),
 }));
-jest.mock("../src/snapshot", () => ({ fetchRecentSnapshotProposals: jest.fn() }));
+jest.mock("../src/snapshot", () => ({ fetchOpenSnapshotProposalPage: jest.fn(), fetchSnapshotProposalsByIds: jest.fn() }));
 
 import {
+  advanceSnapshotReconciliation,
   claimAssessmentJob,
   finalizeAssessment,
+  getSnapshotScanState,
   ingestSnapshotProposals,
+  listOpenSnapshotProposalIds,
   listSubmittedJobs,
+  recordSourceFailure,
   recordSubmittedTransaction,
 } from "../src/database";
 import { runIndexerCycle } from "../src/cycle";
 import { getTransactionState, readAssessment, readDueDiligence, readDueDiligenceV3, submitAssessment, submitDueDiligence } from "../src/genlayer";
-import { fetchRecentSnapshotProposals } from "../src/snapshot";
+import { fetchOpenSnapshotProposalPage, fetchSnapshotProposalsByIds } from "../src/snapshot";
 import type { StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "../src/domain";
 import { contractCanonicalJson, sha256 } from "../src/canonical";
 
@@ -75,7 +82,11 @@ describe("indexer cycle", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(listSubmittedJobs).mockResolvedValue([]);
-    jest.mocked(fetchRecentSnapshotProposals).mockResolvedValue([]);
+    jest.mocked(recordSourceFailure).mockResolvedValue();
+    jest.mocked(getSnapshotScanState).mockResolvedValue({ generation: 1, skip: 0, newProposalCount: 0, stableSweepCount: 0, sweepFingerprint: "", coverage: "scanning", reconciliationOffset: 0 });
+    jest.mocked(fetchOpenSnapshotProposalPage).mockResolvedValue({ proposals: [], first: 20, skip: 0, exhausted: true });
+    jest.mocked(listOpenSnapshotProposalIds).mockResolvedValue([]);
+    jest.mocked(fetchSnapshotProposalsByIds).mockResolvedValue([]);
     jest.mocked(ingestSnapshotProposals).mockResolvedValue({ proposalsSeen: 0, revisionsCreated: 0, jobsCreated: 0 });
     jest.mocked(claimAssessmentJob).mockResolvedValue(undefined);
   });
@@ -90,6 +101,29 @@ describe("indexer cycle", () => {
     }));
     expect(submitAssessment).not.toHaveBeenCalled();
     expect(result.jobsProcessed).toBe(1);
+  });
+
+  it("checks the newest page while resuming an older page so new proposals meet the freshness target", async () => {
+    jest.mocked(getSnapshotScanState).mockResolvedValue({ generation: 1, skip: 50, newProposalCount: 50, stableSweepCount: 0, sweepFingerprint: "page-1", coverage: "scanning", reconciliationOffset: 0 });
+    const open = { externalId: "new", canonicalId: "snapshot:balancer.eth:new", source: { kind: "snapshot" as const, space: "balancer.eth", proposalId: "new" },
+      authorAddress: "0x1111111111111111111111111111111111111111" as const, canonicalUrl: "https://snapshot.box/new", title: "New", bodyText: "Body", choices: [], linkedEvidenceUrls: [], status: "active" as const, assessmentEligible: true };
+    jest.mocked(fetchOpenSnapshotProposalPage)
+      .mockResolvedValueOnce({ proposals: [], first: 50, skip: 50, exhausted: true })
+      .mockResolvedValueOnce({ proposals: [open], first: 50, skip: 0, exhausted: true });
+    await runIndexerCycle({ ...settings, snapshotLimit: 50, enableWrites: false });
+    expect(fetchOpenSnapshotProposalPage).toHaveBeenNthCalledWith(1, "balancer.eth", 50, expect.anything(), 50);
+    expect(fetchOpenSnapshotProposalPage).toHaveBeenNthCalledWith(2, "balancer.eth", 0, expect.anything(), 50);
+    expect(ingestSnapshotProposals).toHaveBeenCalledWith(expect.anything(), expect.anything(), [open], expect.any(Date), "1", "1",
+      { skip: 50, first: 50, exhausted: true, pageIds: [] });
+  });
+
+  it("does not commit progress when a resumed Snapshot page fails", async () => {
+    jest.mocked(getSnapshotScanState).mockResolvedValue({ generation: 2, skip: 50, newProposalCount: 50, stableSweepCount: 0, sweepFingerprint: "page-1", coverage: "scanning", reconciliationOffset: 0 });
+    jest.mocked(fetchOpenSnapshotProposalPage).mockRejectedValueOnce(new Error("middle page failed"));
+    const result = await runIndexerCycle({ ...settings, enableWrites: false });
+    expect(result.errors).toContain("snapshot:balancer.eth: middle page failed");
+    expect(ingestSnapshotProposals).not.toHaveBeenCalled();
+    expect(advanceSnapshotReconciliation).not.toHaveBeenCalled();
   });
 
   it("submits a changed revision instead of accepting stale contract state", async () => {

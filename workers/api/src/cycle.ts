@@ -1,7 +1,10 @@
 import {
   claimAssessmentJob,
+  advanceSnapshotReconciliation,
   finalizeAssessment,
+  getSnapshotScanState,
   ingestSnapshotProposals,
+  listOpenSnapshotProposalIds,
   listSubmittedJobs,
   markJobRetry,
   markSubmittedTerminal,
@@ -14,7 +17,7 @@ import {
   getTransactionState, readAssessment, readDueDiligence, readDueDiligenceV3, submitAssessment, submitDueDiligence, submitDueDiligenceV3,
   type GenLayerSettings,
 } from "./genlayer";
-import { fetchRecentSnapshotProposals } from "./snapshot";
+import { fetchOpenSnapshotProposalPage, fetchSnapshotProposalsByIds } from "./snapshot";
 import { snapshotSourceForSpace } from "./sources";
 import { contractCanonicalJson, sha256 } from "./canonical";
 
@@ -106,13 +109,32 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
     for (const space of settings.snapshotSpaces) {
       const source = snapshotSourceForSpace(space);
       try {
-        const proposals = await fetchRecentSnapshotProposals(space, settings.fetcher ?? fetch, settings.snapshotLimit);
+        const scan = await getSnapshotScanState(client, source);
+        const page = await fetchOpenSnapshotProposalPage(space, scan.skip, settings.fetcher ?? fetch, settings.snapshotLimit);
+        const fresh = scan.skip > 0
+          ? await fetchOpenSnapshotProposalPage(space, 0, settings.fetcher ?? fetch, settings.snapshotLimit)
+          : page;
+        const proposals = [...new Map([...fresh.proposals, ...page.proposals]
+          .map((proposal) => [proposal.externalId, proposal])).values()];
         const ingested = await ingestSnapshotProposals(client, source, proposals, new Date(), settings.assessmentVersion ?? "1",
-          settings.assessmentSchemaVersion ?? settings.assessmentVersion ?? "1");
+          settings.assessmentSchemaVersion ?? settings.assessmentVersion ?? "1",
+          { skip: page.skip, first: page.first, exhausted: page.exhausted,
+            pageIds: page.proposals.map((proposal) => proposal.externalId) });
         result.sourcesPolled += 1;
         result.proposalsSeen += ingested.proposalsSeen;
         result.revisionsCreated += ingested.revisionsCreated;
         result.jobsCreated += ingested.jobsCreated;
+
+        const reconcileIds = await listOpenSnapshotProposalIds(client, source, scan.reconciliationOffset, 50);
+        if (reconcileIds.length > 0) {
+          const reconciled = await fetchSnapshotProposalsByIds(space, reconcileIds, settings.fetcher ?? fetch);
+          const reconciliation = await ingestSnapshotProposals(client, source, reconciled, new Date(),
+            settings.assessmentVersion ?? "1", settings.assessmentSchemaVersion ?? settings.assessmentVersion ?? "1");
+          result.proposalsSeen += reconciliation.proposalsSeen;
+          result.revisionsCreated += reconciliation.revisionsCreated;
+          result.jobsCreated += reconciliation.jobsCreated;
+        }
+        await advanceSnapshotReconciliation(client, source, scan.reconciliationOffset, reconcileIds.length, 50);
       } catch (error) {
         const message = errorMessage(error);
         result.errors.push(`snapshot:${space}: ${message}`);

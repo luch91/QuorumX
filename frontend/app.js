@@ -133,7 +133,7 @@
 
   function sourceCard(source) {
     const space = source.configuration?.space ?? "—";
-    return `<article class="dao-card"><img src="${escapeHtml(safeHttpUrl(source.logoUrl))}" alt="${escapeHtml(source.displayName)} logo" loading="lazy"><h3>${escapeHtml(source.displayName)}</h3><p>${escapeHtml(source.ecosystems.join(" · "))}</p><dl><dt>Snapshot space</dt><dd>${escapeHtml(space)}</dd><dt>Assessment budget</dt><dd>${escapeHtml(source.dailyAssessmentBudget)}/day</dd><dt>Last indexed</dt><dd>${escapeHtml(formatDate(source.lastSucceededAt, { month: "short", day: "numeric" }))}</dd></dl><a href="${escapeHtml(safeHttpUrl(source.homepageUrl))}">Visit governance source ↗</a></article>`;
+    return `<article class="dao-card"><img src="${escapeHtml(safeHttpUrl(source.logoUrl))}" alt="${escapeHtml(source.displayName)} logo" loading="lazy"><h3>${escapeHtml(source.displayName)}</h3><p>${escapeHtml(source.ecosystems.join(" · "))}</p><dl><dt>Snapshot space</dt><dd>${escapeHtml(space)}</dd><dt>Open-proposal coverage</dt><dd>${escapeHtml(source.coverageState === "covered" ? "Complete fixed-point pass" : `Scanning · generation ${source.scanGeneration ?? 1}, offset ${source.scanOffset ?? 0}`)}</dd><dt>Assessment backlog</dt><dd>${escapeHtml(`${source.backlogCount ?? 0} queued${source.oldestBacklogAt ? ` · oldest ${formatDate(source.oldestBacklogAt, { month: "short", day: "numeric" })}` : ""}`)}</dd><dt>Submission capacity</dt><dd>${escapeHtml(source.dailyAssessmentBudget)}/day</dd><dt>Last indexed</dt><dd>${escapeHtml(formatDate(source.lastSucceededAt, { month: "short", day: "numeric" }))}</dd></dl><a href="${escapeHtml(safeHttpUrl(source.homepageUrl))}">Visit governance source ↗</a></article>`;
   }
 
   async function loadSources() {
@@ -401,5 +401,5 @@
   }
 
   return { init, buildProposalQuery, proposalMatchesSearch, daysUntil, short, safeHttpUrl,
-    assessmentLabel, assessmentSignal, renderDueDiligence };
+    assessmentLabel, assessmentSignal, renderDueDiligence, sourceCard };
 });
