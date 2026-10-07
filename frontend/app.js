@@ -54,6 +54,57 @@
     return reducedMotion ? { x: targetX, y: targetY } : { x: random() * width, y: random() * height };
   }
 
+  function fallbackLogoMask(markIndex) {
+    const points = [];
+    const line = (x1, y1, x2, y2, steps = 30) => {
+      for (let index = 0; index < steps; index += 1) {
+        const progress = index / Math.max(steps - 1, 1);
+        points.push({ x: x1 + (x2 - x1) * progress, y: y1 + (y2 - y1) * progress });
+      }
+    };
+    if (markIndex === 0) {
+      [[-34, 42, 10], [-4, 34, 11], [27, 50, 13]].forEach(([cy, rx, ry]) => {
+        for (let index = 0; index < 96; index += 1) {
+          const angle = index / 96 * Math.PI * 2;
+          points.push({ x: Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry });
+        }
+      });
+    } else if (markIndex === 1) {
+      [[-48, -42, 24, -42], [-48, -42, -48, -12], [-48, -12, 6, -12], [6, -12, 6, 14],
+        [6, 14, 48, 14], [48, 14, 48, 42], [-24, 42, 48, 42], [-24, 12, -24, 42]]
+        .forEach((segment) => line(...segment));
+    } else if (markIndex === 2) {
+      const vertices = [[0, -62], [53, -31], [53, 31], [0, 62], [-53, 31], [-53, -31], [0, -62]];
+      for (let index = 0; index < vertices.length - 1; index += 1) line(...vertices[index], ...vertices[index + 1], 28);
+      line(-25, 42, 8, -43, 48); line(4, 43, 33, -28, 44);
+    } else {
+      for (let index = 0; index < 120; index += 1) {
+        const progress = index / 119, y = -62 + progress * 124;
+        const curve = Math.sin(progress * Math.PI) * 33;
+        points.push({ x: -17 - curve, y }, { x: 17 + curve, y });
+      }
+      line(-17, -62, 17, -62, 24); line(-17, 62, 17, 62, 24);
+    }
+    return points;
+  }
+
+  function resolveLogoMasks(sampledMasks) {
+    return [0, 1, 2, 3].map((markIndex) => {
+      const sampled = sampledMasks?.[markIndex];
+      return Array.isArray(sampled) && sampled.length > 0
+        && sampled.every((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))
+        ? sampled : fallbackLogoMask(markIndex);
+    });
+  }
+
+  function boundedPixelRatio(value) {
+    return Number.isFinite(value) && value > 0 ? Math.min(value, 2) : 1;
+  }
+
+  function shouldSettleLogoOrigins(reducedMotion, assetsReady) {
+    return reducedMotion || !assetsReady;
+  }
+
   function buildProposalQuery(filters = {}, cursor, limit = 24) {
     const params = new URLSearchParams({ limit: String(limit) });
     ["status", "assessment", "ecosystem", "author", "source", "dao", "space"].forEach((key) => {
@@ -321,7 +372,7 @@
       { src: "assets/arbitrum.webp", center: .70, mode: "arbitrum" },
       { src: "assets/ens.webp", center: .85, mode: "light" },
     ];
-    let cloud = [], logoParticles = [], logoMasks = [], frame = 0, width = 0, height = 0;
+    let cloud = [], logoParticles = [], logoMasks = resolveLogoMasks(), frame = 0, width = 0, height = 0, assetsReady = false;
 
     function normalRandom() {
       return Math.sqrt(-2 * Math.log(Math.max(Math.random(), .0001))) * Math.cos(Math.PI * 2 * Math.random());
@@ -331,23 +382,28 @@
       return new Promise((resolve) => {
         const image = new Image();
         image.onload = () => {
-          const sampleCanvas = document.createElement("canvas");
-          sampleCanvas.width = sampleCanvas.height = 160;
-          const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
-          sampleContext.drawImage(image, 0, 0, 160, 160);
-          const pixels = sampleContext.getImageData(0, 0, 160, 160).data;
-          const points = [];
-          for (let y = 0; y < 160; y += 2) for (let x = 0; x < 160; x += 2) {
-            const offset = (y * 160 + x) * 4, red = pixels[offset], green = pixels[offset + 1], blue = pixels[offset + 2];
-            const luminance = .2126 * red + .7152 * green + .0722 * blue;
-            const isMark = mark.mode === "dark"
-              ? luminance < 86
-              : mark.mode === "arbitrum"
-                ? (x - 80) ** 2 + (y - 80) ** 2 < 68 ** 2 && luminance > 112 && luminance < 250
-                : Math.hypot(255 - red, 255 - green, 255 - blue) > 38;
-            if (isMark) points.push({ x: x - 80, y: y - 80 });
+          try {
+            const sampleCanvas = document.createElement("canvas");
+            sampleCanvas.width = sampleCanvas.height = 160;
+            const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+            if (!sampleContext) return resolve([]);
+            sampleContext.drawImage(image, 0, 0, 160, 160);
+            const pixels = sampleContext.getImageData(0, 0, 160, 160).data;
+            const points = [];
+            for (let y = 0; y < 160; y += 2) for (let x = 0; x < 160; x += 2) {
+              const offset = (y * 160 + x) * 4, red = pixels[offset], green = pixels[offset + 1], blue = pixels[offset + 2];
+              const luminance = .2126 * red + .7152 * green + .0722 * blue;
+              const isMark = mark.mode === "dark"
+                ? luminance < 86
+                : mark.mode === "arbitrum"
+                  ? (x - 80) ** 2 + (y - 80) ** 2 < 68 ** 2 && luminance > 112 && luminance < 250
+                  : Math.hypot(255 - red, 255 - green, 255 - blue) > 38;
+              if (isMark) points.push({ x: x - 80, y: y - 80 });
+            }
+            resolve(points);
+          } catch {
+            resolve([]);
           }
-          resolve(points);
         };
         image.onerror = () => resolve([]);
         image.src = mark.src;
@@ -365,14 +421,17 @@
           const point = mask[Math.floor(index * mask.length / count) % mask.length];
           const targetX = layout.centers[markIndex] + point.x * layout.logoScale;
           const targetY = layout.logoY + point.y * layout.logoScale;
-          const origin = particleOrigin({ targetX, targetY, width, height, reducedMotion: reduced });
+          const origin = particleOrigin({
+            targetX, targetY, width, height,
+            reducedMotion: shouldSettleLogoOrigins(reduced, assetsReady),
+          });
           logoParticles.push({ ...origin, targetX, targetY, speed: .055 + Math.random() * .025, phase: Math.random() * Math.PI * 2, size: .7 + Math.random() * 1.25 });
         }
       });
     }
 
     function resize() {
-      const rect = canvas.getBoundingClientRect(), ratio = Math.min(devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect(), ratio = boundedPixelRatio(devicePixelRatio);
       const nextWidth = Math.round(rect.width), nextHeight = Math.round(rect.height);
       const layout = particleLayout(nextWidth, nextHeight, reduced, innerWidth);
       if (!layout) return;
@@ -417,7 +476,12 @@
       if (!reduced) frame = requestAnimationFrame(draw);
     }
     const observer = new ResizeObserver(resize); observer.observe(canvas); resize(); draw();
-    Promise.all(marks.map(sampleLogo)).then((masks) => { logoMasks = masks; placeLogos(); if (!reduced) { cancelAnimationFrame(frame); frame = requestAnimationFrame(draw); } else draw(); });
+    Promise.all(marks.map(sampleLogo)).then((masks) => {
+      assetsReady = masks.some((mask) => Array.isArray(mask) && mask.length > 0
+        && mask.every((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y)));
+      logoMasks = resolveLogoMasks(masks); placeLogos();
+      if (!reduced) { cancelAnimationFrame(frame); frame = requestAnimationFrame(draw); } else draw();
+    });
     window.addEventListener("pagehide", () => { cancelAnimationFrame(frame); observer.disconnect(); }, { once: true });
   }
 
@@ -427,5 +491,6 @@
   }
 
   return { init, buildProposalQuery, proposalMatchesSearch, daysUntil, short, safeHttpUrl,
-    assessmentLabel, assessmentSignal, renderDueDiligence, sourceCard, particleLayout, particleOrigin };
+    assessmentLabel, assessmentSignal, renderDueDiligence, sourceCard, particleLayout, particleOrigin,
+    fallbackLogoMask, resolveLogoMasks, boundedPixelRatio, shouldSettleLogoOrigins };
 });

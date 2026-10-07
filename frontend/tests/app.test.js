@@ -10,6 +10,10 @@ const {
   sourceCard,
   particleLayout,
   particleOrigin,
+  fallbackLogoMask,
+  resolveLogoMasks,
+  boundedPixelRatio,
+  shouldSettleLogoOrigins,
 } = require("../app.js");
 
 describe("QuorumX frontend helpers", () => {
@@ -55,6 +59,40 @@ describe("QuorumX frontend helpers", () => {
       expect(particleOrigin({ targetX: 120, targetY: 240, width: 400, height: 600,
         reducedMotion: false, random: () => values.shift() }))
         .toEqual({ x: 100, y: 450 });
+    });
+
+    test("provides four distinct bounded fallback DAO silhouettes", () => {
+      const masks = [0, 1, 2, 3].map(fallbackLogoMask);
+
+      masks.forEach((mask) => {
+        expect(mask.length).toBeGreaterThanOrEqual(80);
+        expect(mask.every(({ x, y }) => Number.isFinite(x) && Number.isFinite(y)
+          && Math.abs(x) <= 80 && Math.abs(y) <= 80)).toBe(true);
+      });
+      expect(new Set(masks.map((mask) => JSON.stringify(mask.slice(0, 20)))).size).toBe(4);
+    });
+
+    test("uses sampled masks only when they contain valid points", () => {
+      const sampled = [[{ x: 1, y: 2 }], [], [{ x: Number.NaN, y: 2 }], null];
+      const resolved = resolveLogoMasks(sampled);
+
+      expect(resolved[0]).toEqual(sampled[0]);
+      expect(resolved.slice(1).every((mask) => mask.length >= 80)).toBe(true);
+    });
+
+    test.each([
+      [undefined, 1], [Number.NaN, 1], [0, 1], [-1, 1], [1, 1], [1.5, 1.5], [4, 2],
+    ])("bounds device pixel ratio %s to %s", (value, expected) => {
+      expect(boundedPixelRatio(value)).toBe(expected);
+    });
+
+    test.each([
+      [false, false, true],
+      [false, true, false],
+      [true, false, true],
+      [true, true, true],
+    ])("settles logo origins when reduced motion is %s and assets are ready is %s", (reducedMotion, assetsReady, expected) => {
+      expect(shouldSettleLogoOrigins(reducedMotion, assetsReady)).toBe(expected);
     });
   });
 
