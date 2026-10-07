@@ -15,16 +15,16 @@ const {
 describe("QuorumX frontend helpers", () => {
   describe("particle hero layout contract", () => {
     test.each([
-      [1440, 420, "desktop", [0.4, 0.55, 0.7, 0.85]],
-      [1024, 560, "tablet", [0.4, 0.55, 0.7, 0.85]],
-      [768, 560, "mobile", [0.13, 0.38, 0.63, 0.88]],
-      [390, 690, "mobile", [0.13, 0.38, 0.63, 0.88]],
-      [320, 690, "mobile", [0.13, 0.38, 0.63, 0.88]],
-    ])("selects a bounded %s px hero profile", (width, height, profile, centerRatios) => {
-      const layout = particleLayout(width, height);
+      [890, 537, 1440, "desktop"],
+      [1024, 500, 1024, "tablet"],
+      [768, 500, 768, "mobile"],
+      [390, 420, 390, "mobile"],
+      [320, 420, 320, "mobile"],
+    ])("selects a bounded %i px canvas within a %i px viewport", (width, height, viewportWidth, profile) => {
+      const layout = particleLayout(width, height, false, viewportWidth);
 
       expect(layout.profile).toBe(profile);
-      expect(layout.centerRatios).toEqual(centerRatios);
+      expect(layout.centerRatios).toEqual([0.125, 0.375, 0.625, 0.875]);
       expect(layout.centers).toHaveLength(4);
       expect(layout.centers.every((center) => center > 0 && center < width)).toBe(true);
       expect(layout.centers).toEqual([...layout.centers].sort((left, right) => left - right));
@@ -35,9 +35,9 @@ describe("QuorumX frontend helpers", () => {
     });
 
     test("records bounded particle density for animated and reduced-motion layouts", () => {
-      expect(particleLayout(1440, 420).cloudParticleCount).toBe(5600);
-      expect(particleLayout(1440, 420, true).cloudParticleCount).toBe(3000);
-      expect(particleLayout(1440, 420).logoParticleCount).toBe(680);
+      expect(particleLayout(890, 537, false, 1440).cloudParticleCount).toBe(7600);
+      expect(particleLayout(890, 537, true, 1440).cloudParticleCount).toBe(4200);
+      expect(particleLayout(890, 537, false, 1440).logoParticleCount).toBe(760);
     });
 
     test.each([[0, 690], [390, 0], [-1, 690], [390, -1]])

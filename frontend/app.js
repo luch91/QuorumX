@@ -33,20 +33,20 @@
     ? `${titleCase(proposal.reviewPriority)} review · ${proposal.findingCount ?? proposal.dueDiligence?.findings?.length ?? 0} findings`
     : proposal.riskLevel ? "Legacy risk assessment" : "Not yet reviewed";
 
-  function particleLayout(width, height, reducedMotion = false) {
+  function particleLayout(width, height, reducedMotion = false, viewportWidth = width) {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-    const profile = width < 820 ? "mobile" : width < 1100 ? "tablet" : "desktop";
+    const profile = viewportWidth < 820 ? "mobile" : viewportWidth < 1100 ? "tablet" : "desktop";
     const mobile = profile === "mobile";
-    const centerRatios = mobile ? [0.13, 0.38, 0.63, 0.88] : [0.4, 0.55, 0.7, 0.85];
+    const centerRatios = [0.125, 0.375, 0.625, 0.875];
     return {
       profile,
       centerRatios,
       centers: centerRatios.map((center) => width * center),
-      artworkStartX: mobile ? 0 : width * 0.32,
-      logoY: height * (mobile ? 0.73 : 0.41),
-      logoScale: Math.min(width * (mobile ? 0.18 : 0.095), mobile ? 90 : 132) / 160,
-      logoParticleCount: 680,
-      cloudParticleCount: reducedMotion ? 3000 : 5600,
+      artworkStartX: 0,
+      logoY: height * (mobile ? 0.47 : 0.41),
+      logoScale: Math.min(width * (mobile ? 0.18 : 0.18), mobile ? 90 : 150) / 160,
+      logoParticleCount: 760,
+      cloudParticleCount: reducedMotion ? 4200 : 7600,
     };
   }
 
@@ -356,7 +356,7 @@
 
     function placeLogos() {
       logoParticles = [];
-      const layout = particleLayout(width, height, reduced);
+      const layout = particleLayout(width, height, reduced, innerWidth);
       if (!layout) return;
       logoMasks.forEach((mask, markIndex) => {
         if (!mask.length) return;
@@ -374,15 +374,15 @@
     function resize() {
       const rect = canvas.getBoundingClientRect(), ratio = Math.min(devicePixelRatio || 1, 2);
       const nextWidth = Math.round(rect.width), nextHeight = Math.round(rect.height);
-      const layout = particleLayout(nextWidth, nextHeight, reduced);
+      const layout = particleLayout(nextWidth, nextHeight, reduced, innerWidth);
       if (!layout) return;
       if (nextWidth === width && nextHeight === height && cloud.length) return;
       width = nextWidth; height = nextHeight; canvas.width = width * ratio; canvas.height = height * ratio; context.setTransform(ratio,0,0,ratio,0,0);
       cloud = Array.from({ length: layout.cloudParticleCount }, () => {
-        const x = width * (.19 + Math.random() * .82), progress = x / width;
-        const centerY = height * (.37 + .055 * Math.sin(progress * 7.2) + .02 * Math.sin(progress * 15.5));
-        const y = centerY + normalRandom() * height * .085;
-        const nearestMark = Math.min(...marks.map((mark) => Math.abs(progress - mark.center)));
+        const x = Math.random() * width, progress = x / width;
+        const centerY = height * (.38 + .055 * Math.sin(progress * 7.2) + .02 * Math.sin(progress * 15.5));
+        const y = centerY + normalRandom() * height * .12;
+        const nearestMark = Math.min(...layout.centerRatios.map((center) => Math.abs(progress - center)));
         return { x, y, phase: Math.random() * Math.PI * 2, size: .45 + Math.random() * (nearestMark < .055 ? 2.4 : 1.5), opacity: .25 + Math.random() * .5 };
       });
       placeLogos();
@@ -397,8 +397,9 @@
         context.fillStyle = "#c88e30";
         context.beginPath(); context.arc(particle.x + drift, particle.y + drift * .35, particle.size, 0, Math.PI * 2); context.fill();
       }
-      for (const mark of marks) {
-        const centerX = width * mark.center, centerY = height * (width < 820 ? .73 : .41);
+      const layout = particleLayout(width, height, reduced, innerWidth);
+      for (const centerX of layout?.centers ?? []) {
+        const centerY = layout.logoY;
         const glow = context.createRadialGradient(centerX, centerY, 2, centerX, centerY, Math.min(width * .12, 172));
         glow.addColorStop(0, "rgba(215, 151, 43, .20)"); glow.addColorStop(1, "rgba(215, 151, 43, 0)");
         context.globalAlpha = 1; context.fillStyle = glow; context.fillRect(centerX - width * .15, centerY - height * .34, width * .3, height * .68);
