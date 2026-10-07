@@ -192,12 +192,15 @@ details.due-item summary strong { color: var(--gold-dark); white-space: nowrap; 
 .due-meta, .due-counts, .due-empty { color: #625e55; }
 .due-steps { padding: 0 0 0 20px; }
 .due-steps li { padding: 10px 0 10px 12px; border-bottom: 1px solid var(--line-light); }
+.due-steps dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; margin: 10px 0; }
+.due-steps dt { color: #706a5f; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.due-steps dd { margin: 0; }
 .due-steps span, .due-steps small, .due-evidence small { display: block; color: #686156; }
 .due-evidence { padding: 13px 0; border-top: 1px solid var(--line-light); }
 .due-priority { margin-top: 44px; padding: 24px; background: #e7d5ad; border-left: 3px solid #8b6022; }
 .due-priority span { font-size: 20px; font-weight: 700; }
 .due-priority small, .due-consensus { color: #615b50; line-height: 1.5; }
-@media (max-width: 700px) { .due-facts { grid-template-columns: 1fr; } .due-item dl { grid-template-columns: 1fr; gap: 5px; } details.due-item summary { display: block; } }
+@media (max-width: 700px) { .due-facts { grid-template-columns: 1fr; } .due-item dl, .due-steps dl { grid-template-columns: 1fr; gap: 5px; } details.due-item summary { display: block; } }
 .record-layout { display: grid; grid-template-columns: minmax(0,1fr) 390px; }
 .record-body { padding: 0 clamp(28px,5vw,72px) 80px; }
 .record-tabs { position: sticky; top: 0; z-index: 2; display: flex; gap: 30px; padding: 20px 0; border-bottom: 1px solid var(--line-light); background: var(--paper); }

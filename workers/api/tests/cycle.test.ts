@@ -13,6 +13,7 @@ jest.mock("../src/genlayer", () => ({
   getTransactionState: jest.fn(),
   readAssessment: jest.fn(),
   readDueDiligence: jest.fn(),
+  readDueDiligenceV3: jest.fn(),
   submitAssessment: jest.fn(),
   submitDueDiligence: jest.fn(),
 }));
@@ -26,9 +27,10 @@ import {
   recordSubmittedTransaction,
 } from "../src/database";
 import { runIndexerCycle } from "../src/cycle";
-import { getTransactionState, readAssessment, readDueDiligence, submitAssessment, submitDueDiligence } from "../src/genlayer";
+import { getTransactionState, readAssessment, readDueDiligence, readDueDiligenceV3, submitAssessment, submitDueDiligence } from "../src/genlayer";
 import { fetchRecentSnapshotProposals } from "../src/snapshot";
-import type { StoredAssessment, StoredDueDiligenceAssessment } from "../src/domain";
+import type { StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "../src/domain";
+import { contractCanonicalJson, sha256 } from "../src/canonical";
 
 const assessment: StoredAssessment = {
   proposalKey: "snapshot:balancer.eth:p1",
@@ -42,6 +44,10 @@ const assessment: StoredAssessment = {
   assessedAt: "2026-09-29T00:00:00Z",
   provenance: "live",
 };
+
+beforeAll(async () => {
+  assessment.sourceLocatorHash = await sha256(contractCanonicalJson(job.source));
+});
 
 const job = {
   id: "1",
@@ -134,9 +140,9 @@ describe("indexer cycle", () => {
 
   it("claims only jobs for the enabled assessment version", async () => {
     await runIndexerCycle(settings);
-    expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "1");
+    expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "1", "1");
     await runIndexerCycle({ ...settings, assessmentVersion: "2" });
-    expect(claimAssessmentJob).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), "2");
+    expect(claimAssessmentJob).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), "2", "2");
   });
 
   it("reads the exact accepted v2 revision before finalizing", async () => {
@@ -152,7 +158,7 @@ describe("indexer cycle", () => {
       genlayer: { ...settings.genlayer, dueDiligenceContractAddress: "0x3333333333333333333333333333333333333333" } });
     expect(readDueDiligence).toHaveBeenCalledWith(expect.objectContaining({
       dueDiligenceContractAddress: "0x3333333333333333333333333333333333333333",
-    }), assessment.proposalKey, expectedHash);
+    }), assessment.proposalKey, expectedHash, undefined);
     expect(finalizeAssessment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ transactionRowId: "3" }));
   });
 
@@ -165,6 +171,25 @@ describe("indexer cycle", () => {
     const result = await runIndexerCycle({ ...settings, enableWrites: false });
     expect(getTransactionState).not.toHaveBeenCalled();
     expect(result.errors).toEqual([]);
+  });
+
+  it("recovers an in-flight v3 transaction through its stored historical contract address", async () => {
+    const historical = "0x4444444444444444444444444444444444444444" as const;
+    jest.mocked(listSubmittedJobs).mockResolvedValue([{
+      jobId: "9", attemptCount: 1, maxAttempts: 20, revisionId: "2", proposalKey: assessment.proposalKey,
+      transactionId: `0x${"9".repeat(64)}`, transactionRowId: "8", assessmentVersion: "3",
+      assessmentSchemaVersion: "3.2", assessmentRunId: "legacy-run", contractAddress: historical,
+      expectedContractContentHash: assessment.contentHash,
+    }]);
+    jest.mocked(getTransactionState).mockResolvedValue({ state: "accepted" });
+    jest.mocked(readDueDiligenceV3).mockResolvedValue({ ...assessment, assessmentVersion: "3",
+      assessmentSchemaVersion: "3.2" } as unknown as StoredDueDiligenceV3Assessment);
+    await runIndexerCycle({ ...settings, enableWrites: false });
+    expect(readDueDiligenceV3).toHaveBeenCalledWith(settings.genlayer, assessment.proposalKey,
+      assessment.contentHash, historical, undefined);
+    expect(finalizeAssessment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      assessmentRunId: "legacy-run", assessmentSchemaVersion: "3.2",
+    }));
   });
 
   it("does not finalize a transaction against the wrong source revision", async () => {

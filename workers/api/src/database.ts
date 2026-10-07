@@ -1,6 +1,6 @@
 import { Client } from "pg";
 import { canonicalJson, contractCanonicalJson, sha256 } from "./canonical";
-import type { SnapshotProposal, StoredAssessment, StoredDueDiligenceAssessment } from "./domain";
+import type { SnapshotProposal, StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "./domain";
 import type { SnapshotSourceDefinition } from "./sources";
 
 export interface IngestResult {
@@ -18,7 +18,9 @@ export interface ClaimedJob {
   expectedContractContentHash: string;
   proposalKey: string;
   source: { kind: "snapshot"; space: string; proposalId: string };
-  assessmentVersion?: "1" | "2";
+  assessmentVersion?: "1" | "2" | "3";
+  assessmentSchemaVersion?: string;
+  assessmentRunId?: string;
 }
 
 export interface SubmittedJob {
@@ -29,7 +31,11 @@ export interface SubmittedJob {
   proposalKey: string;
   transactionId: string;
   transactionRowId: string;
-  assessmentVersion?: "1" | "2";
+  assessmentVersion?: "1" | "2" | "3";
+  assessmentSchemaVersion?: string;
+  assessmentRunId?: string;
+  contractAddress?: string;
+  source?: { kind: "snapshot"; space: string; proposalId: string };
   expectedContractContentHash?: string;
 }
 
@@ -86,7 +92,8 @@ export async function ingestSnapshotProposals(
   source: SnapshotSourceDefinition,
   proposals: SnapshotProposal[],
   now = new Date(),
-  assessmentVersion: "1" | "2" = "1",
+  assessmentVersion: "1" | "2" | "3" = "1",
+  assessmentSchemaVersion: string = assessmentVersion,
 ): Promise<IngestResult> {
   await client.query("begin");
   try {
@@ -185,7 +192,7 @@ export async function ingestSnapshotProposals(
         revisionsCreated += 1;
       }
       if (shouldAssess(proposal, now) && remainingBudget > 0
-        && (revisionResult.rowCount === 1 || assessmentVersion === "2")) {
+        && (revisionResult.rowCount === 1 || assessmentVersion !== "1")) {
         const revisionId = revisionResult.rows[0]?.id ?? (await client.query<{ id: string }>(`
           select id::text from quorumx.proposal_revisions
           where proposal_id = $1 and content_hash = $2
@@ -193,11 +200,13 @@ export async function ingestSnapshotProposals(
         if (!revisionId) throw new Error("Indexed revision was not found");
         const jobResult = await client.query(`
           insert into quorumx.assessment_jobs
-            (revision_id, assessment_version, status, available_at, created_at, updated_at)
-          values ($1, $2, 'pending', $3, $3, $3)
-          on conflict (revision_id, assessment_version) do nothing
+            (revision_id, assessment_version, assessment_schema_version, assessment_run_id,
+             is_initial_assessment, status, available_at, created_at, updated_at)
+          values ($1, $2, $3, $4, true, 'pending', $5, $5, $5)
+          on conflict do nothing
           returning id
-        `, [revisionId, assessmentVersion, now.toISOString()]);
+        `, [revisionId, assessmentVersion, assessmentSchemaVersion,
+          `initial:${assessmentSchemaVersion}:${revisionId}`, now.toISOString()]);
         jobsCreated += jobResult.rowCount ?? 0;
         remainingBudget -= jobResult.rowCount ?? 0;
       }
@@ -228,8 +237,9 @@ export async function ingestSnapshotProposals(
 export async function listSubmittedJobs(client: Client, limit = 5): Promise<SubmittedJob[]> {
   const result = await client.query<{
     job_id: string; attempt_count: number; max_attempts: number; revision_id: string;
-    canonical_id: string; transaction_hash: string; transaction_row_id: string; assessment_version: "1" | "2";
-    expected_contract_content_hash: string;
+    canonical_id: string; transaction_hash: string; transaction_row_id: string; assessment_version: "1" | "2" | "3";
+    expected_contract_content_hash: string; assessment_schema_version: string; assessment_run_id: string;
+    contract_address: string; source: { kind: "snapshot"; space: string; proposalId: string };
   }>(`
     select
       jobs.id::text as job_id,
@@ -237,15 +247,19 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
       jobs.max_attempts,
       jobs.revision_id::text,
       jobs.assessment_version,
+      jobs.assessment_schema_version,
+      jobs.assessment_run_id,
       revisions.normalized_payload ->> 'assessmentContentHash' as expected_contract_content_hash,
+      revisions.normalized_payload -> 'source' as source,
       proposals.canonical_id,
       transactions.transaction_hash,
-      transactions.id::text as transaction_row_id
+      transactions.id::text as transaction_row_id,
+      transactions.contract_address
     from quorumx.assessment_jobs jobs
     join quorumx.proposal_revisions revisions on revisions.id = jobs.revision_id
     join quorumx.proposals proposals on proposals.id = revisions.proposal_id
     join lateral (
-      select id, transaction_hash
+      select id, transaction_hash, contract_address
       from quorumx.transactions
       where job_id = jobs.id and state = 'submitted'
       order by submitted_at desc
@@ -264,16 +278,22 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
     transactionId: row.transaction_hash,
     transactionRowId: row.transaction_row_id,
     assessmentVersion: row.assessment_version,
+    assessmentSchemaVersion: row.assessment_schema_version,
+    assessmentRunId: row.assessment_run_id,
+    contractAddress: row.contract_address,
+    source: row.source,
     expectedContractContentHash: row.expected_contract_content_hash,
   }));
 }
 
 export async function claimAssessmentJob(
-  client: Client, workerId: string, assessmentVersion: "1" | "2" = "1",
+  client: Client, workerId: string, assessmentVersion: "1" | "2" | "3" = "1",
+  assessmentSchemaVersion: string = assessmentVersion,
 ): Promise<ClaimedJob | undefined> {
   const result = await client.query<{
     id: string; attempt_count: number; max_attempts: number; revision_id: string;
-    canonical_id: string; content_hash: string; normalized_payload: Record<string, unknown>; assessment_version: "1" | "2";
+    canonical_id: string; content_hash: string; normalized_payload: Record<string, unknown>; assessment_version: "1" | "2" | "3";
+    assessment_schema_version: string; assessment_run_id: string;
   }>(`
     update quorumx.assessment_jobs jobs
     set
@@ -285,7 +305,7 @@ export async function claimAssessmentJob(
     where jobs.id = (
       select candidate.id
       from quorumx.assessment_jobs candidate
-      where candidate.assessment_version = $2 and (
+      where candidate.assessment_version = $2 and candidate.assessment_schema_version = $3 and (
         (candidate.status in ('pending', 'retryable') and candidate.available_at <= now())
         or (candidate.status = 'processing' and candidate.locked_at < now() - interval '15 minutes')
       )
@@ -299,6 +319,8 @@ export async function claimAssessmentJob(
       jobs.max_attempts,
       jobs.revision_id::text,
       jobs.assessment_version,
+      jobs.assessment_schema_version,
+      jobs.assessment_run_id,
       (select proposals.canonical_id from quorumx.proposal_revisions revisions
        join quorumx.proposals proposals on proposals.id = revisions.proposal_id
        where revisions.id = jobs.revision_id),
@@ -306,7 +328,7 @@ export async function claimAssessmentJob(
        where revisions.id = jobs.revision_id),
       (select revisions.content_hash from quorumx.proposal_revisions revisions
        where revisions.id = jobs.revision_id)
-  `, [workerId, assessmentVersion]);
+  `, [workerId, assessmentVersion, assessmentSchemaVersion]);
   const row = result.rows[0];
   if (!row) return undefined;
   const payload = row.normalized_payload;
@@ -328,7 +350,31 @@ export async function claimAssessmentJob(
     proposalKey: row.canonical_id,
     source,
     assessmentVersion: row.assessment_version,
+    assessmentSchemaVersion: row.assessment_schema_version,
+    assessmentRunId: row.assessment_run_id,
   };
+}
+
+export async function createReassessmentJob(
+  client: Client, canonicalId: string, assessmentSchemaVersion: "3.3", assessmentRunId: string,
+): Promise<string | undefined> {
+  if (!/^[A-Za-z0-9:._-]{1,120}$/.test(assessmentRunId)) throw new Error("invalid_assessment_run_id");
+  const result = await client.query<{ id: string }>(`
+    insert into quorumx.assessment_jobs (
+      revision_id, assessment_version, assessment_schema_version, assessment_run_id,
+      is_initial_assessment, status, available_at, created_at, updated_at
+    )
+    select revisions.id, '3', $2, $3, false, 'pending', now(), now(), now()
+    from quorumx.proposals proposals
+    join lateral (
+      select id from quorumx.proposal_revisions where proposal_id = proposals.id
+      order by fetched_at desc, id desc limit 1
+    ) revisions on true
+    where proposals.canonical_id = $1
+    on conflict (assessment_run_id) do nothing
+    returning id::text
+  `, [canonicalId, assessmentSchemaVersion, assessmentRunId]);
+  return result.rows[0]?.id;
 }
 
 export async function markJobRetry(client: Client, job: ClaimedJob, message: string): Promise<void> {
@@ -379,28 +425,37 @@ export async function finalizeAssessment(
     jobId: string;
     revisionId: string;
     transactionRowId?: string;
-    assessment: StoredAssessment | StoredDueDiligenceAssessment;
+    assessment: StoredAssessment | StoredDueDiligenceAssessment | StoredDueDiligenceV3Assessment;
     indexedFrom: "submitted_transaction" | "existing_contract_state";
+    assessmentRunId?: string;
+    assessmentSchemaVersion?: string;
   },
 ): Promise<void> {
   await client.query("begin");
   try {
-    if ("assessmentVersion" in input.assessment) {
+    if ("assessmentVersion" in input.assessment && input.assessment.assessmentVersion === "3") {
+      if (!input.transactionRowId) throw new Error("V3 assessment requires a recorded transaction");
+      await client.query(`
+        insert into quorumx.due_diligence_assessments_v3 (
+          revision_id, transaction_id, assessment_schema_version, assessment_run_id,
+          proposal_key, source_locator_hash, content_hash,
+          record, consensus_state, provenance, assessed_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'accepted', $9, $10)
+        on conflict (assessment_run_id) do nothing
+      `, [input.revisionId, input.transactionRowId,
+        input.assessment.assessmentSchemaVersion ?? input.assessmentSchemaVersion ?? "3.0",
+        input.assessment.assessmentRunId ?? input.assessmentRunId,
+        input.assessment.proposalKey,
+        input.assessment.sourceLocatorHash, input.assessment.contentHash,
+        JSON.stringify(input.assessment), input.assessment.provenance, input.assessment.assessedAt]);
+    } else if ("assessmentVersion" in input.assessment) {
       if (!input.transactionRowId) throw new Error("V2 assessment requires a recorded transaction");
       await client.query(`
         insert into quorumx.due_diligence_assessments (
           revision_id, transaction_id, proposal_key, source_locator_hash, content_hash,
           record, consensus_state, provenance, assessed_at
         ) values ($1, $2, $3, $4, $5, $6::jsonb, 'accepted', $7, $8)
-        on conflict (revision_id) do update set
-          transaction_id = excluded.transaction_id,
-          proposal_key = excluded.proposal_key,
-          source_locator_hash = excluded.source_locator_hash,
-          content_hash = excluded.content_hash,
-          record = excluded.record,
-          consensus_state = excluded.consensus_state,
-          provenance = excluded.provenance,
-          assessed_at = excluded.assessed_at
+        on conflict (revision_id) do nothing
       `, [input.revisionId, input.transactionRowId, input.assessment.proposalKey,
         input.assessment.sourceLocatorHash, input.assessment.contentHash,
         JSON.stringify(input.assessment), input.assessment.provenance, input.assessment.assessedAt]);

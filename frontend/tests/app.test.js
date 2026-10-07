@@ -43,6 +43,13 @@ describe("QuorumX frontend helpers", () => {
     expect(short("0x1234567890abcdef")).toBe("0x1234…cdef");
   });
 
+  test.each([
+    ["indexed", "Indexed"], ["waiting_capacity", "Waiting for capacity"], ["processing", "Processing"],
+    ["submitted", "Submitted"], ["retrying", "Retrying"], ["finalized", "Accepted"], ["unavailable", "Unavailable"],
+  ])("renders the public lifecycle label for %s", (state, label) => {
+    expect(assessmentLabel(state)).toBe(label);
+  });
+
   test("demotes legacy scores and explains v2 findings without vote advice", () => {
     expect(assessmentSignal({ riskLevel: "high", riskScore: 78 })).toBe("Legacy risk assessment");
     expect(assessmentSignal({ assessmentVersion: "2", reviewPriority: "high", findingCount: 2 }))
@@ -81,6 +88,135 @@ describe("QuorumX frontend helpers", () => {
       reviewPriority: "low", reviewPriorityExplanation: "No material issue identified.",
     });
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img src=x");
+  });
+
+  test("renders v3 secondary evidence and safeguard absence without overclaiming", () => {
+    const html = renderDueDiligence({
+      assessmentVersion: "3",
+      overview: { purpose: "Transfer 5M ARB", requestedActions: ["Transfer 5M ARB"],
+        assetsAffected: ["5M ARB"], permissionsChanged: [], controlChanges: [] },
+      evidence: [
+        { id: "proposal", type: "proposal", locator: "https://snapshot.box/p1", description: "Proposal",
+          contentHash: "a".repeat(64), verificationScope: "validator_retrieved_proposal", authority: "primary" },
+        { id: "safe-mainnet", type: "safe", locator: "https://api.safe.global/tx-service/eth/api/v1/safes/0x1111111111111111111111111111111111111111/",
+          description: "Safe configuration", contentHash: "b".repeat(64),
+          verificationScope: "validator_retrieved_external_source", authority: "secondary",
+          structuredData: { address: "0x1111111111111111111111111111111111111111", threshold: 2,
+            owners: ["0x2222222222222222222222222222222222222222", "0x3333333333333333333333333333333333333333"], version: "1.4.1" } },
+      ],
+      externalEvidenceState: "retrieved",
+      materialClaims: [{ id: "c1", claim: "Safe threshold 2/2", status: "supported", explanation: "Matches retrieved config.",
+        sourceExcerpt: "Safe threshold 2/2", counterExcerpt: "2/2 threshold", confidence: "medium", claimScope: "external_factual",
+        evidence: ["proposal", "safe-mainnet"], verificationMethod: "safe_transaction_service_eth_mainnet_config_comparison" }],
+      findings: [{ id: "f1", title: "Treasury action", sourceExcerpt: "Transfer 5M ARB", observation: "Transfer 5M ARB",
+        whyItMatters: "Custody changes.", impact: "Later control is not established.", severity: "high", confidence: "medium",
+        evidence: ["proposal"], existingSafeguards: [], safeguardGaps: [{ safeguard: "recovery", state: "not_identified",
+          scope: "Complete validator-retrieved proposal", relatedActionIds: ["a1"], evidence: ["proposal"] }],
+        humanDependencies: [], technicalDependencies: [], reversible: "unknown", uncertainty: "Bounded source.",
+        consensus: { state: "accepted", method: "independent_structured_derivation_v3" } }],
+      safeguardGaps: [{ safeguard: "recovery", state: "not_identified", scope: "Complete validator-retrieved proposal",
+        relatedActionIds: ["a1"], evidence: ["proposal"] }],
+      executionMap: [], unresolvedQuestions: [], reviewPriority: "high",
+      reviewPriorityExplanation: "High review priority; human review remains advisory.",
+    });
+    expect(assessmentSignal({ assessmentVersion: "3", reviewPriority: "high", findingCount: 1 })).toBe("High review · 1 findings");
+    expect(html).toContain("v3");
+    expect(html).toContain("Secondary authority");
+    expect(html).toContain("Provider-reported secondary evidence; not a cryptographic state/inclusion proof");
+    expect(html).toContain("Not Identified");
+    expect(html).toContain("Proposal claim");
+    expect(html).toContain("Safe evidence: Retrieved");
+    expect(html).not.toContain("on-chain verified");
+  });
+
+  test("renders v3.1 provider-verified claim separately from the proposal assertion", () => {
+    const html = renderDueDiligence({
+      assessmentVersion: "3", assessmentSchemaVersion: "3.1", externalEvidenceState: "retrieved",
+      returnedFundsState: "retrieved",
+      overview: { purpose: "Report returned ETH", requestedActions: ["Review the distribution"],
+        assetsAffected: ["ETH"], permissionsChanged: [], controlChanges: [] },
+      evidence: [
+        { id: "proposal", type: "proposal", locator: "https://snapshot.box/p1", description: "Snapshot proposal",
+          contentHash: "a".repeat(64), verificationScope: "validator_retrieved_proposal", authority: "primary" },
+        { id: "return-tx-1", type: "onchain", locator: "https://eth.blockscout.com/tx/0x" + "1".repeat(64),
+          description: "Blockscout-indexed Ethereum mainnet returned-fund transaction 1", contentHash: "b".repeat(64),
+          verificationScope: "validator_retrieved_external_source", authority: "secondary",
+          structuredData: { amountEth: "120.000000", status: "success", blockNumber: 123, transferType: "transaction_value" } },
+      ],
+      materialClaims: [{ id: "c1", claim: "The proposal reports 120 ETH returned to the DAO Safe in 1 transaction.",
+        sourceExcerpt: "120 ETH", counterExcerpt: "Blockscout-reported transfer total 120 ETH.",
+        claimScope: "external_factual", status: "supported", explanation: "Provider-reported transaction data matches the proposal row.",
+        evidence: ["proposal", "return-tx-1"], confidence: "high", verificationMethod: "blockscout_mainnet_transfer_amount_comparison" }],
+      findings: [], executionMap: [], unresolvedQuestions: [], safeguardGaps: [], changes: [],
+      reviewPriority: "normal", reviewPriorityExplanation: "Normal review priority; human review remains advisory.",
+    });
+    expect(html).toContain("schema 3.1");
+    expect(html).toContain("Returned-funds trace: Retrieved");
+    expect(html).toContain("Proposal claim");
+    expect(html).toContain("Provider-reported transaction data matches the proposal row.");
+    expect(html).toContain("Secondary authority");
+    expect(html).toContain("Provider-reported secondary evidence; not a cryptographic state/inclusion proof");
+    expect(html).toContain("120.000000 ETH · success · block 123");
+    expect(html).not.toContain("on-chain verified");
+  });
+
+  test("renders v3.2 pinned dual-RPC Safe evidence with provider-reported provenance", () => {
+    const blockHash = "0x" + "d".repeat(64);
+    const owners = ["0x2222222222222222222222222222222222222222", "0x3333333333333333333333333333333333333333"];
+    const html = renderDueDiligence({
+      assessmentVersion: "3", assessmentSchemaVersion: "3.2", externalEvidenceState: "retrieved",
+      returnedFundsState: "not_attempted",
+      overview: { purpose: "Check Safe configuration", requestedActions: ["Review Safe"],
+        assetsAffected: [], permissionsChanged: [], controlChanges: [] },
+      evidence: ["publicnode", "drpc"].map((provider) => ({
+        id: `safe-rpc-${provider}`, type: "safe_onchain",
+        locator: provider === "publicnode" ? "https://ethereum-rpc.publicnode.com" : "https://eth.drpc.org",
+        description: `${provider} Safe state`, contentHash: "a".repeat(64),
+        verificationScope: "validator_retrieved_external_source", authority: "secondary",
+        structuredData: { provider, address: "0x1111111111111111111111111111111111111111", chainId: 1,
+          blockNumber: 25_000_000, blockHash, threshold: 2, owners },
+      })),
+      materialClaims: [], findings: [], executionMap: [], unresolvedQuestions: [], safeguardGaps: [],
+      reviewPriority: "low", reviewPriorityExplanation: "No material issue identified.",
+    });
+    expect(html).toContain("Dual-RPC Safe state check: Retrieved");
+    expect(html).toContain("Provider publicnode · Ethereum block 25000000");
+    expect(html).toContain("Provider drpc · Ethereum block 25000000");
+    expect(html).toContain("not a cryptographic state/inclusion proof");
+    expect(html).toContain("checked the fixed Ethereum RPC providers against one pinned block");
+    expect(html).not.toContain("Safe Transaction Service sources");
+  });
+
+  test("renders schema 3.3 relationships, consequence fields, and inert unsafe locators", () => {
+    const html = renderDueDiligence({ assessmentVersion: "3", assessmentSchemaVersion: "3.3",
+      externalEvidenceState: "not_attempted", returnedFundsState: "not_attempted",
+      overview: { purpose: "Transfer funds", requestedActions: ["Transfer 1M ARB"], assetsAffected: ["1M ARB"], permissionsChanged: [], controlChanges: [] },
+      evidence: [{ id: "proposal", type: "proposal", locator: "javascript:alert(1)", description: "<img src=x onerror=alert(1)>",
+        contentHash: "a".repeat(64), verificationScope: "validator_retrieved_proposal", authority: "primary" }],
+      materialClaims: [{ id: "c1", claim: "Transfer 1M ARB", sourceExcerpt: "Transfer 1M ARB", counterExcerpt: "",
+        claimScope: "proposal_action", status: "not_applicable", proposalAssertion: true,
+        explanation: "Proposal assertion only.", evidence: ["proposal"], evidenceAuthority: ["primary"], confidence: "high", verificationMethod: "proposal_presence_only" }],
+      safeguardGaps: [{ id: "sg1", safeguard: "recovery", state: "not_identified", scope: "reviewed material", evidence: ["proposal"] }],
+      findings: [{ id: "f1", title: "Control moves", observation: "Transfer", sourceExcerpt: "Transfer 1M ARB", whyItMatters: "Custody changes.",
+        impact: "Direct DAO control ends after transfer.", severity: "high", confidence: "medium", evidence: ["proposal"], existingSafeguards: [],
+        safeguardGapIds: ["sg1"], humanDependencies: ["3 Safe signers"], technicalDependencies: ["Safe contract"], reversible: "unknown",
+        uncertainty: "Later path not established.", consensus: { state: "accepted", method: "independent_structured_derivation_v3_3" } }],
+      executionMap: [{ id: "s1", order: 1, action: "Transfer 1M ARB", actor: "DAO treasury", target: "Safe 0x123", amount: "1M", asset: "ARB",
+        dependency: "3/5 approval", impact: "Subsequent path not established.", humanDependencies: ["Safe signers"], technicalDependencies: ["Safe contract"], reversible: "unknown", evidence: ["proposal"] }],
+      unresolvedQuestions: [{ id: "q1", question: "Who approves?", whyItMatters: "Approval controls release.", evidenceGap: "Approver unknown.",
+        relatedFindingIds: ["f1"], relatedClaimIds: ["c1"], relatedExecutionStepIds: ["s1"] }],
+      reviewPriority: "high", reviewPriorityExplanation: "High human attention.",
+    });
+    expect(html).toContain("Not Identified in reviewed material");
+    expect(html).toContain("DAO treasury");
+    expect(html).toContain("3/5 approval");
+    expect(html).toContain("Subsequent execution path not established");
+    expect(html).toContain("derived matching decision-bearing structured fields");
+    expect(html).toContain('href="#finding-f1"');
+    expect(html).toContain('href="#claim-c1"');
+    expect(html).toContain('href="#execution-s1"');
+    expect(html).not.toContain('href="#"');
     expect(html).not.toContain("<img src=x");
   });
 });

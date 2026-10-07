@@ -1,7 +1,8 @@
 import type { Client } from "pg";
-import { getAssessment, getDueDiligence, getProposal, listProposals, listSources } from "./api";
+import { getAssessment, getDueDiligence, getDueDiligenceV3, getProposal, listProposals, listSources } from "./api";
 import { runIndexerCycle } from "./cycle";
 import { withDatabase } from "./database";
+import { createReassessmentJob } from "./database";
 import { snapshotSourceForSpace } from "./sources";
 
 const CONTRACT_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -30,11 +31,14 @@ function pathValue(value: string): string {
 function cycleSettings(env: Env) {
   const configuredVersion: string = env.QUORUMX_ASSESSMENT_VERSION;
   if (!CONTRACT_ADDRESS.test(env.QUORUMX_CONTRACT_ADDRESS)) throw new Error("Contract address is invalid");
-  if (configuredVersion !== "1" && configuredVersion !== "2") {
+  if (configuredVersion !== "1" && configuredVersion !== "2" && configuredVersion !== "3") {
     throw new Error("Assessment version is invalid");
   }
   if (configuredVersion === "2" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)) {
     throw new Error("V2 contract address is invalid");
+  }
+  if (configuredVersion === "3" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)) {
+    throw new Error("V3 contract address is invalid");
   }
   if (!PRIVATE_KEY.test(env.QUORUMX_GENLAYER_PRIVATE_KEY)) throw new Error("GenLayer signing key is invalid");
   const snapshotLimit = Number(env.QUORUMX_SNAPSHOT_LIMIT);
@@ -51,12 +55,22 @@ function cycleSettings(env: Env) {
     snapshotSpaces,
     snapshotLimit,
     enableWrites: env.QUORUMX_ENABLE_WRITES === "true",
-    assessmentVersion: configuredVersion as "1" | "2",
+    assessmentVersion: configuredVersion as "1" | "2" | "3",
+    assessmentSchemaVersion: configuredVersion === "3" ? "3.3" : configuredVersion,
     genlayer: {
       contractAddress: env.QUORUMX_CONTRACT_ADDRESS as `0x${string}`,
       ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)
         ? { dueDiligenceContractAddress: env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS as `0x${string}` }
         : {}),
+      ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)
+        ? { dueDiligenceV3ContractAddress: env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS as `0x${string}` }
+        : {}),
+      dueDiligenceContracts: {
+        ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)
+          ? { "2": env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS as `0x${string}` } : {}),
+        ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)
+          ? { "3.3": env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS as `0x${string}` } : {}),
+      },
       privateKey: env.QUORUMX_GENLAYER_PRIVATE_KEY as `0x${string}`,
       ...(env.QUORUMX_GENLAYER_RPC_URL ? { rpcUrl: env.QUORUMX_GENLAYER_RPC_URL } : {}),
     },
@@ -134,6 +148,18 @@ async function route(request: Request, env: Env): Promise<Response> {
     console.log(JSON.stringify({ message: "manual indexer cycle completed", ...result }));
     return json(result, { status: result.errors.length ? 207 : 200 });
   }
+  if (url.pathname === "/internal/reassess" && request.method === "POST") {
+    const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+    if (!await secureEqual(provided, env.QUORUMX_ADMIN_TOKEN)) return json({ error: "unauthorized" }, { status: 401 });
+    const body = await request.json() as { canonicalId?: unknown; assessmentRunId?: unknown };
+    if (typeof body.canonicalId !== "string" || !body.canonicalId.trim()) return json({ error: "invalid_canonical_id" }, { status: 400 });
+    const canonicalId = body.canonicalId;
+    const runId = typeof body.assessmentRunId === "string" ? body.assessmentRunId : `manual:3.3:${crypto.randomUUID()}`;
+    const jobId = await withDatabase(env.HYPERDRIVE.connectionString,
+      (client) => createReassessmentJob(client, canonicalId, "3.3", runId));
+    return jobId ? json({ jobId, assessmentRunId: runId }, { status: 202 })
+      : json({ error: "proposal_not_found_or_duplicate_run" }, { status: 409 });
+  }
   if (request.method !== "GET") {
     return json({ error: "method_not_allowed" }, { status: 405, headers: { allow: "GET" } });
   }
@@ -154,6 +180,11 @@ async function route(request: Request, env: Env): Promise<Response> {
       if (url.pathname.startsWith("/v2/proposals/") && url.pathname.endsWith("/due-diligence")) {
         const canonicalId = pathValue(url.pathname.slice("/v2/proposals/".length, -"/due-diligence".length));
         const assessment = await getDueDiligence(client, canonicalId);
+        return assessment ? json({ data: assessment }) : json({ error: "not_found" }, { status: 404 });
+      }
+      if (url.pathname.startsWith("/v3/proposals/") && url.pathname.endsWith("/due-diligence")) {
+        const canonicalId = pathValue(url.pathname.slice("/v3/proposals/".length, -"/due-diligence".length));
+        const assessment = await getDueDiligenceV3(client, canonicalId, url.searchParams.get("schema") ?? undefined);
         return assessment ? json({ data: assessment }) : json({ error: "not_found" }, { status: 404 });
       }
       return json({ error: "not_found" }, { status: 404 });

@@ -4,22 +4,59 @@ import { TransactionHashVariant } from "genlayer-js/types";
 import type { TransactionHash } from "genlayer-js/types";
 import type { StoredAssessment } from "./domain";
 import type { StoredDueDiligenceAssessment } from "./domain";
+import type { StoredDueDiligenceV3Assessment } from "./domain";
 import { parseDueDiligence } from "./due_diligence";
+import { parseDueDiligenceV3 } from "./due_diligence_v3";
 import { classifyTransaction, type TransactionState } from "./transaction";
 
 export interface GenLayerSettings {
   contractAddress: `0x${string}`;
   dueDiligenceContractAddress?: `0x${string}`;
+  dueDiligenceV3ContractAddress?: `0x${string}`;
+  dueDiligenceContracts?: Partial<Record<"2" | "3.1" | "3.2" | "3.3", `0x${string}`>>;
   privateKey?: `0x${string}`;
   rpcUrl?: string;
 }
 
-export async function readDueDiligence(
-  settings: GenLayerSettings, proposalKey: string, contentHash?: string,
-): Promise<StoredDueDiligenceAssessment | undefined> {
-  if (!settings.dueDiligenceContractAddress) throw new Error("V2 contract address is not configured");
+export async function readDueDiligenceV3(
+  settings: GenLayerSettings, proposalKey: string, contentHash?: string, storedContractAddress?: `0x${string}`,
+  assessmentRunId?: string,
+): Promise<StoredDueDiligenceV3Assessment | undefined> {
+  const address = storedContractAddress ?? settings.dueDiligenceContracts?.["3.3"] ?? settings.dueDiligenceV3ContractAddress;
+  if (!address) throw new Error("V3 contract address is not configured");
   const raw = await clientFor(settings).readContract({
-    address: settings.dueDiligenceContractAddress,
+    address,
+    functionName: assessmentRunId ? "get_assessment_by_run" : contentHash ? "get_assessment_for_revision" : "get_assessment",
+    args: assessmentRunId ? [assessmentRunId] : contentHash ? [proposalKey, contentHash] : [proposalKey],
+    transactionHashVariant: TransactionHashVariant.LATEST_FINAL,
+  });
+  return parseDueDiligenceV3(raw, proposalKey);
+}
+
+export async function submitDueDiligenceV3(
+  settings: GenLayerSettings,
+  source: { kind: "snapshot"; space: string; proposalId: string },
+  idempotencyKey: string,
+): Promise<string> {
+  const address = settings.dueDiligenceContracts?.["3.3"] ?? settings.dueDiligenceV3ContractAddress;
+  if (!settings.privateKey || !address) {
+    throw new Error("V3 contract or signing key is not configured");
+  }
+  return clientFor(settings).writeContract({
+    address,
+    functionName: "assess",
+    args: [JSON.stringify(source), idempotencyKey],
+    value: 0n,
+  });
+}
+
+export async function readDueDiligence(
+  settings: GenLayerSettings, proposalKey: string, contentHash?: string, storedContractAddress?: `0x${string}`,
+): Promise<StoredDueDiligenceAssessment | undefined> {
+  const address = storedContractAddress ?? settings.dueDiligenceContracts?.["2"] ?? settings.dueDiligenceContractAddress;
+  if (!address) throw new Error("V2 contract address is not configured");
+  const raw = await clientFor(settings).readContract({
+    address,
     functionName: contentHash ? "get_assessment_for_revision" : "get_assessment",
     args: contentHash ? [proposalKey, contentHash] : [proposalKey],
     transactionHashVariant: TransactionHashVariant.LATEST_FINAL,

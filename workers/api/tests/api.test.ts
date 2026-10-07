@@ -1,4 +1,4 @@
-import { listProposals } from "../src/api";
+import { getDueDiligenceV3, listProposals } from "../src/api";
 
 describe("proposal API filters", () => {
   it("normalizes and binds DAO, author, assessment, and ecosystem filters", async () => {
@@ -30,5 +30,16 @@ describe("proposal API filters", () => {
   ])("rejects invalid filter %s", async (query, error) => {
     await expect(listProposals({} as never, new URL(`https://api.quorumx.dev/v1/proposals?${query}`)))
       .rejects.toThrow(error);
+  });
+});
+
+describe("versioned due diligence reads", () => {
+  it("defaults to the newest schema and binds an explicit historical selector", async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    await getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "3.2");
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining("assessment_schema_version desc"),
+      ["snapshot:safe.eth:p1", "3.2"]);
+    await expect(getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "latest"))
+      .rejects.toThrow("invalid_assessment_schema");
   });
 });

@@ -51,8 +51,8 @@ export async function listProposals(client: Client, url: URL): Promise<unknown> 
   }
   if (author && !/^0x[0-9a-f]{40}$/.test(author)) throw new RangeError("invalid_author");
   if (dao && (dao.length > 100 || !/^[a-z0-9 ._-]+$/.test(dao))) throw new RangeError("invalid_dao");
-  const assessmentStatuses = ["pending", "processing", "submitted", "finalized", "retryable", "failed", "dead_letter"];
-  if (assessment && assessment !== "unassessed" && !assessmentStatuses.includes(assessment)) {
+  const assessmentStatuses = ["indexed", "waiting_capacity", "processing", "submitted", "finalized", "retrying", "unavailable"];
+  if (assessment && !assessmentStatuses.includes(assessment)) {
     throw new RangeError("invalid_assessment");
   }
   if (ecosystem && !/^[a-z0-9][a-z0-9-]{0,49}$/.test(ecosystem)) throw new RangeError("invalid_ecosystem");
@@ -77,16 +77,21 @@ export async function listProposals(client: Client, url: URL): Promise<unknown> 
       proposals.voting_ends_at as "votingEndsAt",
       revisions.content_hash as "revisionHash",
       revisions.fetched_at as "revisionFetchedAt",
-      jobs.status as "assessmentStatus",
-      case when due_diligence.id is not null then '2' when assessments.id is not null then '1' else null end as "assessmentVersion",
-      due_diligence.record ->> 'reviewPriority' as "reviewPriority",
-      case when due_diligence.id is not null then jsonb_array_length(due_diligence.record -> 'findings') else null end as "findingCount",
-      case when due_diligence.id is not null then jsonb_array_length(due_diligence.record -> 'materialClaims') else null end as "claimCount",
-      case when due_diligence.id is not null then jsonb_array_length(due_diligence.record -> 'unresolvedQuestions') else null end as "unresolvedCount",
+      coalesce(case jobs.status
+        when 'pending' then 'waiting_capacity'
+        when 'retryable' then 'retrying'
+        when 'dead_letter' then 'unavailable'
+        when 'failed' then 'unavailable'
+        else jobs.status end, 'indexed') as "assessmentStatus",
+      case when due_diligence_v3.id is not null then '3' when due_diligence.id is not null then '2' when assessments.id is not null then '1' else null end as "assessmentVersion",
+      coalesce(due_diligence_v3.record, due_diligence.record) ->> 'reviewPriority' as "reviewPriority",
+      case when coalesce(due_diligence_v3.id, due_diligence.id) is not null then jsonb_array_length(coalesce(due_diligence_v3.record, due_diligence.record) -> 'findings') else null end as "findingCount",
+      case when coalesce(due_diligence_v3.id, due_diligence.id) is not null then jsonb_array_length(coalesce(due_diligence_v3.record, due_diligence.record) -> 'materialClaims') else null end as "claimCount",
+      case when coalesce(due_diligence_v3.id, due_diligence.id) is not null then jsonb_array_length(coalesce(due_diligence_v3.record, due_diligence.record) -> 'unresolvedQuestions') else null end as "unresolvedCount",
       assessments.risk_level as "riskLevel",
       assessments.risk_score as "riskScore",
       assessments.recommendation,
-      coalesce(due_diligence.assessed_at, assessments.assessed_at) as "assessedAt"
+      coalesce(due_diligence_v3.assessed_at, due_diligence.assessed_at, assessments.assessed_at) as "assessedAt"
     from quorumx.proposals proposals
     join quorumx.sources sources on sources.id = proposals.source_id
     left join lateral (
@@ -98,17 +103,27 @@ export async function listProposals(client: Client, url: URL): Promise<unknown> 
     ) revisions on true
     left join lateral (
       select id, status from quorumx.assessment_jobs
-      where revision_id = revisions.id order by assessment_version desc limit 1
+      where revision_id = revisions.id order by assessment_version desc, assessment_schema_version desc, created_at desc limit 1
     ) jobs on true
     left join quorumx.assessments assessments on assessments.revision_id = revisions.id
     left join quorumx.due_diligence_assessments due_diligence on due_diligence.revision_id = revisions.id
+    left join lateral (
+      select * from quorumx.due_diligence_assessments_v3
+      where revision_id = revisions.id
+      order by assessment_schema_version desc, assessed_at desc, id desc limit 1
+    ) due_diligence_v3 on true
     where ($1::bigint is null or proposals.id < $1)
       and ($2::text is null or proposals.status = $2)
       and ($3::text is null or sources.configuration ->> 'space' = $3)
       and ($4::text is null or sources.source_key = $4)
       and ($5::text is null or lower(sources.display_name) = $5 or sources.configuration ->> 'space' = $5)
       and ($6::text is null or proposals.author_address = $6)
-      and ($7::text is null or ($7 = 'unassessed' and jobs.id is null) or jobs.status = $7)
+      and ($7::text is null
+        or ($7 = 'indexed' and jobs.id is null)
+        or ($7 = 'waiting_capacity' and jobs.status = 'pending')
+        or ($7 = 'retrying' and jobs.status = 'retryable')
+        or ($7 = 'unavailable' and jobs.status in ('failed', 'dead_letter'))
+        or jobs.status = $7)
       and ($8::text is null or sources.ecosystems ? $8)
     order by proposals.id desc
     limit $9
@@ -154,10 +169,15 @@ export async function getProposal(client: Client, canonicalId: string): Promise<
       revisions.fetched_at as "revisionFetchedAt",
       revisions.normalized_payload as "currentRevisionPayload",
       previous_revision.normalized_payload as "previousRevisionPayload",
-      jobs.status as "assessmentStatus",
+      coalesce(case jobs.status
+        when 'pending' then 'waiting_capacity'
+        when 'retryable' then 'retrying'
+        when 'dead_letter' then 'unavailable'
+        when 'failed' then 'unavailable'
+        else jobs.status end, 'indexed') as "assessmentStatus",
       jobs.last_error as "assessmentError",
-      case when due_diligence.id is not null then '2' when assessments.id is not null then '1' else null end as "assessmentVersion",
-      due_diligence.record as "dueDiligence",
+      case when due_diligence_v3.id is not null then '3' when due_diligence.id is not null then '2' when assessments.id is not null then '1' else null end as "assessmentVersion",
+      coalesce(due_diligence_v3.record, due_diligence.record) as "dueDiligence",
       transactions.transaction_hash as "transactionHash",
       transactions.state as "transactionState",
       assessments.source_locator_hash as "sourceLocatorHash",
@@ -167,9 +187,9 @@ export async function getProposal(client: Client, canonicalId: string): Promise<
       assessments.risk_categories as "riskCategories",
       assessments.recommendation,
       assessments.summary,
-      coalesce(due_diligence.consensus_state, assessments.consensus_state) as "consensusState",
-      coalesce(due_diligence.provenance, assessments.provenance) as provenance,
-      coalesce(due_diligence.assessed_at, assessments.assessed_at) as "assessedAt",
+      coalesce(due_diligence_v3.consensus_state, due_diligence.consensus_state, assessments.consensus_state) as "consensusState",
+      coalesce(due_diligence_v3.provenance, due_diligence.provenance, assessments.provenance) as provenance,
+      coalesce(due_diligence_v3.assessed_at, due_diligence.assessed_at, assessments.assessed_at) as "assessedAt",
       assessments.indexed_from as "indexedFrom"
     from quorumx.proposals proposals
     join quorumx.sources sources on sources.id = proposals.source_id
@@ -187,15 +207,20 @@ export async function getProposal(client: Client, canonicalId: string): Promise<
     ) previous_revision on true
     left join lateral (
       select id, status, last_error from quorumx.assessment_jobs
-      where revision_id = revisions.id order by assessment_version desc limit 1
+      where revision_id = revisions.id order by assessment_version desc, assessment_schema_version desc, created_at desc limit 1
     ) jobs on true
     left join quorumx.assessments assessments on assessments.revision_id = revisions.id
     left join quorumx.due_diligence_assessments due_diligence on due_diligence.revision_id = revisions.id
     left join lateral (
+      select * from quorumx.due_diligence_assessments_v3
+      where revision_id = revisions.id
+      order by assessment_schema_version desc, assessed_at desc, id desc limit 1
+    ) due_diligence_v3 on true
+    left join lateral (
       select transaction_hash, state
       from quorumx.transactions
-      where id = coalesce(due_diligence.transaction_id, assessments.transaction_id)
-        or (due_diligence.id is null and assessments.id is null and job_id = jobs.id)
+      where id = coalesce(due_diligence_v3.transaction_id, due_diligence.transaction_id, assessments.transaction_id)
+        or (due_diligence_v3.id is null and due_diligence.id is null and assessments.id is null and job_id = jobs.id)
       order by submitted_at desc
       limit 1
     ) transactions on true
@@ -253,6 +278,28 @@ export async function getDueDiligence(client: Client, proposalKey: string): Prom
     order by due_diligence.assessed_at desc, due_diligence.id desc
     limit 1
   `, [proposalKey]);
+  const row = result.rows[0];
+  return row ? { ...row.record, revisionHash: row.revisionHash, transactionHash: row.transactionHash,
+    network: row.network, contractAddress: row.contractAddress } : undefined;
+}
+
+export async function getDueDiligenceV3(client: Client, proposalKey: string, schema?: string): Promise<unknown | undefined> {
+  if (schema !== undefined && !/^3\.(?:0|1|2|3)$/.test(schema)) throw new RangeError("invalid_assessment_schema");
+  const result = await client.query(`
+    select
+      due_diligence.record,
+      revisions.content_hash as "revisionHash",
+      transactions.transaction_hash as "transactionHash",
+      transactions.network,
+      transactions.contract_address as "contractAddress"
+    from quorumx.due_diligence_assessments_v3 due_diligence
+    join quorumx.proposal_revisions revisions on revisions.id = due_diligence.revision_id
+    join quorumx.transactions transactions on transactions.id = due_diligence.transaction_id
+    where due_diligence.proposal_key = $1
+      and ($2::text is null or due_diligence.assessment_schema_version = $2)
+    order by due_diligence.assessment_schema_version desc, due_diligence.assessed_at desc, due_diligence.id desc
+    limit 1
+  `, [proposalKey, schema ?? null]);
   const row = result.rows[0];
   return row ? { ...row.record, revisionHash: row.revisionHash, transactionHash: row.transactionHash,
     network: row.network, contractAddress: row.contractAddress } : undefined;
