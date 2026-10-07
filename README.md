@@ -21,7 +21,7 @@ validators accepted.
 
 ## Current architecture: due diligence v3.3
 
-Schema 3.3 is the current implementation and staging target. Its immutable
+Schema 3.3 is the current public implementation. Its immutable
 Studionet contract is
 [`0xf183c38364Bc92726E54d3639a6c4f8d107630c7`](https://explorer-studio.genlayer.com/address/0xf183c38364Bc92726E54d3639a6c4f8d107630c7),
 deployed by transaction
@@ -39,12 +39,13 @@ endpoints. Each evidence object is hashed and attached only to the claims it
 supports. Provider corroboration is not represented as a cryptographic state
 proof, and arbitrary proposal-linked URLs are never fetched.
 
-The v3.3 staging configuration indexes `balancer.eth`, `safe.eth`,
-`arbitrumfoundation.eth`, and `ens.eth`. A read-only v3.3 staging deployment and
-subsequent v2 rollback were exercised successfully. Staging is currently left
-on v2 because its remote database has not passed the schema 3.3 promotion gate.
-The public Worker and Living Index also remain on v2; rollback is an
-assessment-version configuration change and does not rewrite v3 records.
+The v3.3 public and read-only staging Workers index `balancer.eth`, `safe.eth`,
+`arbitrumfoundation.eth`, and `ens.eth`. Migrations `0007` and `0008` are
+applied to the corresponding Neon branches. The public Worker runs v3.3 with
+the established five-minute discovery schedule; staging has writes disabled.
+The `quorumx-v3-3-pre-promotion-20261007` Neon branch preserves the exact
+pre-promotion production state. A rollback is an assessment-version
+configuration change and does not rewrite v1, v2, or v3 records.
 
 ### Historical v2 production deployment
 
@@ -141,20 +142,18 @@ Versioned assessment accepted on Studionet
 Worker parser/finalizer/API path tested transactionally on Neon dev branch
 ```
 
-This is the isolated evaluation path, not the public production pipeline. The
-v3 Worker and Neon finalizer are rollback-tested on the dev branch; production
-Cloudflare, Neon main, and the public Living Index remain on v2.
+This was the isolated v3.2 evaluation path, before v3.3 promotion. It is not a
+description of the current public pipeline.
 
-Migration `0007` is applied only to the expiring Neon branch
-`dev-due-diligence-v3`, not Neon main. A rollback-only integration check
+The v3.2 rollout initially applied migration `0007` only to the expiring Neon
+branch `dev-due-diligence-v3`. A rollback-only integration check
 matched the indexed revision's assessment content hash to the live record,
 exercised the actual v3 finalizer and both API query paths, and confirmed no
 assessment, transaction, or v3 job rows remained after rollback. The real
 Worker parser accepts the exact on-chain record, validates both Safe provider
 records against the same pinned block, and checks evidence hashes and claim
-relationships. Production Neon, the public Cloudflare Worker, and the public
-Living Index remain on v2. V3.2 has not been promoted or exposed as a public
-endpoint.
+relationships. These statements are historical: production Neon now also has
+the additive v3.3 migration and the public Cloudflare Worker serves v3.3.
 
 Earlier evaluation deployments remain immutable, including the v3.1
 Safe-API-based record and earlier candidates. The first v3.1 candidate
@@ -226,7 +225,7 @@ snapshot:balancer.eth:0x25ee897681ae8bbae5ae224b14ad6a03ea6920f768d52b2e9aa1a85b
 
 The stored assessment identifies execution, governance, liquidity, smart-contract, and treasury risk. Its summary highlights the proposed BAL transfer, governance conflicts, council-threshold changes, IP assignment, migration dependencies, and speculative return assumptions. This demonstrates a functioning consensus path; it is not financial advice or a claim that Studionet is production infrastructure.
 
-## Deployed architecture (v2)
+## Deployed architecture (v3.3)
 
 ```text
 Public proposal source
@@ -234,11 +233,14 @@ Public proposal source
         ▼
 QuorumX operator client
 discover · dedupe · submit · wait · recover · present
-        │ assess(source, idempotency key)
+        │ assess(source, immutable run ID)
         ▼
-GovernanceDueDiligence v2 on GenLayer
-parse → independent retrieval → strict source equality
-      → grounded assessment → bounded storage
+GovernanceDueDiligence v3.3 on GenLayer
+validators independently retrieve proposal → strict source equality
+      → independently derive/validate structured facts
+      → fixed Safe RPC, Blockscout, and governance-history adapters
+      → evidence-linked claims, safeguards, and consequences
+      → bounded immutable storage
         │ readable consensus state
         ▼
 CLI · Living Index · governance integrations
@@ -248,8 +250,8 @@ CLI · Living Index · governance integrations
 | --- | --- | --- |
 | Source adapters | Discover and normalize references | Declaring the authoritative risk result |
 | TypeScript operator | Deadline checks, deduplication, submission, recovery, presentation | Supplying authoritative proposal text |
-| `GovernanceDueDiligence` | Retrieval, canonicalization, source-grounded fact validation, bounded storage | Voting or executing governance actions |
-| GenLayer validators | Independently observe and validate nondeterministic work | Trusting local operator evidence |
+| `GovernanceDueDiligenceV33` | Retrieval, canonicalization, source-grounded fact validation, bounded immutable storage | Voting or executing governance actions |
+| GenLayer validators | Independently retrieve proposals and derive/validate bounded facts and fixed-adapter evidence | Trusting local operator evidence |
 | Living Index | Present the public proposal index, review priorities, and verified evidence | Requiring a wallet for public reads or holding keys |
 
 ### v0.3 multi-DAO governance indexer
@@ -266,7 +268,7 @@ Cloudflare Worker · api.quorumx.dev
 Neon Postgres · proposals · immutable revisions · durable jobs · transactions
         │ assessment submission and finality tracking
         ▼
-GovernanceDueDiligence v2 on GenLayer
+GovernanceDueDiligence v3.3 on GenLayer
 ```
 
 `GET /health` exercises the deployed Worker, Hyperdrive, and Neon database together. Atomic `FOR UPDATE SKIP LOCKED` claiming and stale-lock recovery prevent concurrent cron invocations from processing the same job. Contract state is accepted only when its proposal key and validator-agreed content hash match the indexed revision. The runtime database role is SQL-managed and intentionally lacks `DELETE`, schema ownership, DDL, and Neon's broad `neon_superuser` membership.
@@ -281,7 +283,7 @@ GovernanceDueDiligence v2 on GenLayer
 | `GET /v1/proposals/<canonical-id>` | Proposal body, revision, transaction, and accepted assessment details |
 | `GET /v1/assessments/<proposal-key>` | Accepted assessment and GenLayer provenance |
 | `GET /v2/proposals/<canonical-id>/due-diligence` | Deployed v2 proposal-grounded due-diligence record |
-| `GET /v3/proposals/<canonical-id>/due-diligence` | Additive v3 evidence-aware Worker route; not live on the public Worker until its migration and deployment are separately promoted |
+| `GET /v3/proposals/<canonical-id>/due-diligence` | Current v3.3 evidence-aware record; optional `schema=3.3` selects the immutable schema explicitly |
 
 Proposal lists accept `status`, `space`, exact `source`, human-facing `dao`, proposer `author`, `assessment`, and `ecosystem` filters. Use `assessment=unassessed` for indexed proposals without a job. Lists also accept `limit` (maximum 100) and the numeric `cursor` returned as `page.nextCursor`. Reads require no wallet or API key. The internal cycle endpoint is bearer-protected; normal ingestion is cron-driven.
 
@@ -461,14 +463,15 @@ and full-history Gitleaks scanning. The separate daily/on-demand **Studionet
 smoke** has no key and performs no write; it enumerates Balancer, SafeDAO,
 Arbitrum DAO, and ENS DAO and reads canonical stored state. Current local checks
 pass 64 Python contract tests plus 14 subtests, 8 GenLayer Direct Mode tests,
-the pinned GenVM v0.2.16 semantic check, and 36 Jest suites with 187 tests; the
-three PostgreSQL integration tests are a separate database-backed gate.
+one five-validator Linux GLSim integration test, the pinned GenVM v0.2.16
+semantic check, and 37 Jest suites with 188 tests; the three PostgreSQL
+integration tests are a separate database-backed gate.
 `npm audit --audit-level=high` passes with no high or critical findings and
 reports 20 moderate test-tooling findings through Jest/ts-jest. The v3.3
 BIP-930 Studionet record proves fixed provider retrieval and the reported
 values, not completeness of recovery data, the exploit-loss figure, or a
-cryptographic chain proof. Public production remains on v2 until the database
-migration and production promotion gates are explicitly completed.
+cryptographic chain proof. Public production now uses v3.3; historical v1 and
+v2 records remain readable without reinterpretation.
 
 The contract workflow pins `GENVM_VERSION=v0.2.16` and caches the official GenVM bundle so SDK-backed checks use a reproducible runner artifact. All three contracts pass `genvm-lint check` against that bundle.
 

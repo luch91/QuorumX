@@ -17,7 +17,7 @@ async function main() {
       return;
     }
     const statement = await client.query(
-      "select format('create role quorumx_runtime with login password %L', $1) as sql",
+      "select format('create role quorumx_runtime with login password %L', $1::text) as sql",
       [password],
     );
     await client.query(statement.rows[0].sql);

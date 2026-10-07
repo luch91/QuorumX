@@ -5,6 +5,7 @@ from pathlib import Path
 
 from gltest.assertions import tx_execution_succeeded
 from gltest.contracts.contract_factory import ContractFactory, extract_contract_address
+from gltest.clients import get_gl_client
 from gltest.types import TransactionStatus
 
 
@@ -25,10 +26,13 @@ def test_v33_deploy_write_and_read_require_successful_execution(default_account)
         wait_retries=100,
         wait_transaction_status=TransactionStatus.ACCEPTED,
     )
-    assert tx_execution_succeeded(deploy_receipt)
-    contract = factory.build_contract(extract_contract_address(deploy_receipt), account=default_account)
+    assert tx_execution_succeeded(deploy_receipt), deploy_receipt
+    contract_address = extract_contract_address(deploy_receipt)
+    client = get_gl_client()
 
-    schema = json.loads(contract.get_contract_schema().call())
+    schema = json.loads(client.read_contract(
+        address=contract_address, function_name="get_contract_schema", account=default_account, args=[],
+    ))
     assert schema == {
         "assessmentSchemaVersion": "3.3",
         "assessmentVersion": "3",
@@ -36,13 +40,18 @@ def test_v33_deploy_write_and_read_require_successful_execution(default_account)
     }
 
     run_id = "localnet-v33-release-smoke"
-    write_receipt = contract.assess(args=[json.dumps(SOURCE), run_id]).transact(
-        wait_interval=3000,
-        wait_retries=150,
-        wait_transaction_status=TransactionStatus.ACCEPTED,
+    write_hash = client.write_contract(
+        address=contract_address, function_name="assess", account=default_account,
+        args=[json.dumps(SOURCE), run_id],
     )
-    assert tx_execution_succeeded(write_receipt)
-    record = json.loads(contract.get_assessment_by_run(args=[run_id]).call())
+    write_receipt = client.wait_for_transaction_receipt(
+        transaction_hash=write_hash, interval=3000, retries=150,
+        status=TransactionStatus.ACCEPTED,
+    )
+    assert tx_execution_succeeded(write_receipt), write_receipt
+    record = json.loads(client.read_contract(
+        address=contract_address, function_name="get_assessment_by_run", account=default_account, args=[run_id],
+    ))
     assert record["assessmentVersion"] == "3"
     assert record["assessmentSchemaVersion"] == "3.3"
     assert record["assessmentRunId"] == run_id
