@@ -16,6 +16,7 @@ describe("GPU particle core", () => {
     expect(packageJson.dependencies.three).toBe("0.186.1");
     expect(packageJson.scripts["stage:three"]).toBe("node scripts/stage_three.cjs");
     expect(existsSync(resolve(process.cwd(), "frontend/vendor/three.module.js"))).toBe(true);
+    expect(existsSync(resolve(process.cwd(), "frontend/vendor/three.core.js"))).toBe(true);
   });
 
   test("generates stable seeded sequences with meaningful divergence", () => {
@@ -30,9 +31,9 @@ describe("GPU particle core", () => {
   });
 
   test.each([
-    [1467, 367, 1467, 3, "reference", 24000, 18000, 5200, 2],
-    [1024, 500, 1024, 1, "tablet", 18000, 13000, 4000, 1],
-    [390, 420, 390, 4, "mobile", 9000, 7000, 1800, 2],
+    [1467, 367, 1467, 3, "reference", 60000, 46000, 3600, 2],
+    [1024, 500, 1024, 1, "tablet", 38000, 30000, 2800, 1],
+    [390, 420, 390, 4, "mobile", 18000, 14000, 1800, 2],
   ])("selects bounded %s px particle profiles", (width, height, viewportWidth, dpr, name, atmosphere, flow, logo, pixelRatio) => {
     expect(particleProfile(width, height, viewportWidth, dpr)).toMatchObject({
       name, atmosphereCount: atmosphere, flowCount: flow, logoCount: logo, pixelRatio,
@@ -54,7 +55,8 @@ describe("GPU particle core", () => {
     expect(first.sizes).toHaveLength(profile.atmosphereCount);
     expect(first.brightness).toHaveLength(profile.atmosphereCount);
     expect([...first.positions.slice(0, 24)]).toEqual([...second.positions.slice(0, 24)]);
-    expect(Math.max(...first.sizes)).toBeLessThanOrEqual(1.45);
+    expect(Math.max(...first.sizes)).toBeLessThanOrEqual(2.8);
+    expect(Math.max(...first.sizes)).toBeGreaterThan(1.8);
     expect(Math.min(...first.sizes)).toBeGreaterThanOrEqual(0.349);
   });
 
@@ -71,6 +73,33 @@ describe("GPU particle core", () => {
     expect(mask.weights[2 * 5 + 2]).toBeGreaterThan(0);
     expect(mask.edges[1 * 5 + 1]).toBeGreaterThan(mask.edges[2 * 5 + 2]);
     expect(mask.weights[0]).toBe(0);
+  });
+
+  test.each([
+    ["safe", [0, 224, 129, 255], [8, 12, 10, 255]],
+    ["arbitrum", [255, 255, 255, 255], [40, 92, 151, 255]],
+    ["ens", [255, 255, 255, 255], [84, 137, 236, 255]],
+  ])("isolates the %s mark from its source background", (mode, background, mark) => {
+    const data = new Uint8ClampedArray([...background, ...mark]);
+    const mask = normalizeMaskPixels({ data, width: 2, height: 1 }, mode);
+
+    expect(mask.weights[0]).toBe(0);
+    expect(mask.weights[1]).toBeGreaterThan(0);
+  });
+
+  test("keeps Arbitrum's inner white glyph while rejecting its white page and navy disc", () => {
+    const data = new Uint8ClampedArray(5 * 5 * 4);
+    const paint = (x, y, color) => data.set([...color, 255], (y * 5 + x) * 4);
+    for (let y = 0; y < 5; y += 1) for (let x = 0; x < 5; x += 1) paint(x, y, [255, 255, 255]);
+    paint(2, 1, [31, 53, 72]);
+    paint(2, 2, [248, 249, 250]);
+    paint(3, 2, [24, 171, 226]);
+
+    const mask = normalizeMaskPixels({ data, width: 5, height: 5 }, "arbitrum");
+    expect(mask.weights[0]).toBe(0);
+    expect(mask.weights[1 * 5 + 2]).toBe(0);
+    expect(mask.weights[2 * 5 + 2]).toBeGreaterThan(0);
+    expect(mask.weights[2 * 5 + 3]).toBeGreaterThan(0);
   });
 
   test("samples deterministic dense logo buffers at final normalized positions", () => {

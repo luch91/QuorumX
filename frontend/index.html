@@ -9,6 +9,7 @@
   <title>QuorumX — Governance due diligence</title>
   <link rel="canonical" href="https://quorumx.dev/">
   <link rel="stylesheet" href="styles.css">
+  <script src="particles.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -34,8 +35,9 @@
         <p class="hero-intro">QuorumX investigates governance proposals so delegates can inspect material claims, consequences, safeguards, and open questions before deciding.</p>
         <div class="hero-actions"><a class="button button-gold" href="#proposals">Browse proposals <span aria-hidden="true">→</span></a><span class="public-note">No wallet required</span></div>
       </div>
-      <div class="particle-stage" aria-label="Balancer, SafeDAO, Arbitrum DAO and ENS DAO are indexed by QuorumX">
-        <canvas id="dao-particles" aria-hidden="true"></canvas>
+        <div class="particle-stage" aria-label="Balancer, SafeDAO, Arbitrum DAO and ENS DAO are indexed by QuorumX">
+          <canvas id="dao-particles" aria-hidden="true"></canvas>
+          <canvas id="dao-particles-gpu" aria-hidden="true"></canvas>
         <div class="particle-labels" aria-hidden="true"><span>Balancer</span><span>SafeDAO</span><span>Arbitrum DAO</span><span>ENS DAO</span></div>
         <div class="verification-path" aria-label="QuorumX verification stages">
           <div class="path-step is-complete"><i></i><span>Indexed<small>Canonical source</small></span></div>

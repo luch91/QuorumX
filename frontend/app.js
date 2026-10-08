@@ -396,48 +396,10 @@
   function setupParticles() {
     const canvas = $("#dao-particles"); if (!canvas) return;
     const context = canvas.getContext("2d"), reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const marks = [
-      { src: "assets/balancer.webp", center: .40, mode: "dark" },
-      { src: "assets/safe.webp", center: .55, mode: "dark" },
-      { src: "assets/arbitrum.webp", center: .70, mode: "arbitrum" },
-      { src: "assets/ens.webp", center: .85, mode: "light" },
-    ];
-    let cloud = [], logoParticles = [], logoMasks = resolveLogoMasks(), frame = 0, width = 0, height = 0, assetsReady = false;
+    let cloud = [], logoParticles = [], logoMasks = [], frame = 0, width = 0, height = 0, assetsReady = false;
 
     function normalRandom() {
       return Math.sqrt(-2 * Math.log(Math.max(Math.random(), .0001))) * Math.cos(Math.PI * 2 * Math.random());
-    }
-
-    function sampleLogo(mark) {
-      return new Promise((resolve) => {
-        const image = new Image();
-        image.onload = () => {
-          try {
-            const sampleCanvas = document.createElement("canvas");
-            sampleCanvas.width = sampleCanvas.height = 160;
-            const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
-            if (!sampleContext) return resolve([]);
-            sampleContext.drawImage(image, 0, 0, 160, 160);
-            const pixels = sampleContext.getImageData(0, 0, 160, 160).data;
-            const points = [];
-            for (let y = 0; y < 160; y += 2) for (let x = 0; x < 160; x += 2) {
-              const offset = (y * 160 + x) * 4, red = pixels[offset], green = pixels[offset + 1], blue = pixels[offset + 2];
-              const luminance = .2126 * red + .7152 * green + .0722 * blue;
-              const isMark = mark.mode === "dark"
-                ? luminance < 86
-                : mark.mode === "arbitrum"
-                  ? (x - 80) ** 2 + (y - 80) ** 2 < 68 ** 2 && luminance > 112 && luminance < 250
-                  : Math.hypot(255 - red, 255 - green, 255 - blue) > 38;
-              if (isMark) points.push({ x: x - 80, y: y - 80 });
-            }
-            resolve(points);
-          } catch {
-            resolve([]);
-          }
-        };
-        image.onerror = () => resolve([]);
-        image.src = mark.src;
-      });
     }
 
     function placeLogos() {
@@ -486,13 +448,6 @@
         context.fillStyle = "#c88e30";
         context.beginPath(); context.arc(particle.x + drift, particle.y + drift * .35, particle.size, 0, Math.PI * 2); context.fill();
       }
-      const layout = particleLayout(width, height, reduced, innerWidth);
-      for (const centerX of layout?.centers ?? []) {
-        const centerY = layout.logoY;
-        const glow = context.createRadialGradient(centerX, centerY, 2, centerX, centerY, Math.min(width * .12, 172));
-        glow.addColorStop(0, "rgba(215, 151, 43, .20)"); glow.addColorStop(1, "rgba(215, 151, 43, 0)");
-        context.globalAlpha = 1; context.fillStyle = glow; context.fillRect(centerX - width * .15, centerY - height * .34, width * .3, height * .68);
-      }
       for (const particle of logoParticles) {
         if (!reduced) {
           particle.x += (particle.targetX - particle.x) * particle.speed;
@@ -506,17 +461,55 @@
       if (!reduced) frame = requestAnimationFrame(draw);
     }
     const observer = new ResizeObserver(resize); observer.observe(canvas); resize(); draw();
-    Promise.all(marks.map(sampleLogo)).then((masks) => {
-      assetsReady = masks.some((mask) => Array.isArray(mask) && mask.length > 0
-        && mask.every((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y)));
-      logoMasks = resolveLogoMasks(masks); placeLogos();
-      if (!reduced) { cancelAnimationFrame(frame); frame = requestAnimationFrame(draw); } else draw();
-    });
     window.addEventListener("pagehide", () => { cancelAnimationFrame(frame); observer.disconnect(); }, { once: true });
   }
 
+  function loadParticleMask(mark) {
+    if (mark.procedural) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const sampleCanvas = document.createElement("canvas"); sampleCanvas.width = sampleCanvas.height = 160;
+          const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+          if (!sampleContext) return resolve(null);
+          sampleContext.drawImage(image, 0, 0, 160, 160);
+          resolve(globalThis.QuorumXParticles.normalizeMaskPixels(sampleContext.getImageData(0, 0, 160, 160), mark.mode));
+        } catch { resolve(null); }
+      };
+      image.onerror = () => resolve(null); image.src = mark.src;
+    });
+  }
+
+  async function setupGpuParticles() {
+    const core = globalThis.QuorumXParticles, canvas = $("#dao-particles-gpu"), stage = canvas?.closest(".particle-stage");
+    if (!core || !canvas || !stage) return;
+    const marks = [
+      { src: "assets/balancer.webp", mode: "dark" }, { src: "assets/safe.webp", mode: "safe" },
+      { src: "assets/arbitrum.webp", mode: "arbitrum" }, { src: "assets/ens.webp", mode: "ens" },
+    ];
+    try {
+      const masks = core.resolveParticleMasks(await Promise.all(marks.map(loadParticleMask)));
+      const rect = canvas.getBoundingClientRect();
+      const profile = core.particleProfile(Math.round(rect.width), Math.round(rect.height), innerWidth, devicePixelRatio);
+      if (!profile) return;
+      const { createParticleRenderer } = await import("./particle_renderer.js");
+      const renderer = createParticleRenderer({
+        canvas, masks, profile, core,
+        reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+        onReady: () => stage.classList.add("webgl-ready"),
+        onFailure: () => stage.classList.remove("webgl-ready"),
+      });
+      const observer = new ResizeObserver(() => {
+        const bounds = canvas.getBoundingClientRect(); renderer.resize(Math.round(bounds.width), Math.round(bounds.height)); renderer.render();
+      });
+      observer.observe(canvas);
+      window.addEventListener("pagehide", () => { observer.disconnect(); renderer.dispose(); }, { once: true });
+    } catch { stage.classList.remove("webgl-ready"); }
+  }
+
   function init() {
-    setupNavigation(); setupWallet(); setupFilters(); setupDelegatedActions(); setupParticles();
+    setupNavigation(); setupWallet(); setupFilters(); setupDelegatedActions(); setupParticles(); setupGpuParticles();
     Promise.allSettled([loadSources(), loadAttention(), loadProposals(), loadAssessments()]);
   }
 

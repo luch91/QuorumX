@@ -21,17 +21,17 @@
     const pixelRatio = Number.isFinite(dpr) && dpr > 0 ? Math.min(dpr, 2) : 1;
     if (viewportWidth >= 1100) return {
       name: "reference", width, height, pixelRatio,
-      atmosphereCount: 24000, flowCount: 18000, logoCount: 5200,
+      atmosphereCount: 60000, flowCount: 46000, logoCount: 3600,
       pointSize: [0.35, 1.45], seed: 0x51f15e,
     };
     if (viewportWidth >= 820) return {
       name: "tablet", width, height, pixelRatio,
-      atmosphereCount: 18000, flowCount: 13000, logoCount: 4000,
+      atmosphereCount: 38000, flowCount: 30000, logoCount: 2800,
       pointSize: [0.35, 1.35], seed: 0x51f15e,
     };
     return {
       name: "mobile", width, height, pixelRatio,
-      atmosphereCount: 9000, flowCount: 7000, logoCount: 1800,
+      atmosphereCount: 18000, flowCount: 14000, logoCount: 1800,
       pointSize: [0.35, 1.2], seed: 0x51f15e,
     };
   }
@@ -54,10 +54,11 @@
       const envelope = Math.sin((x + 1) * 3.7) * 0.08 + Math.sin((x + 1) * 8.4) * 0.035;
       const depth = random();
       positions[offset] = x;
-      positions[offset + 1] = envelope + gaussian(random) * (0.22 + depth * 0.08);
+      positions[offset + 1] = .14 + envelope + gaussian(random) * (0.29 + depth * 0.11);
       positions[offset + 2] = depth * 2 - 1;
-      sizes[index] = minimumSize + (maximumSize - minimumSize) * Math.pow(random(), 2.1);
-      brightness[index] = 0.22 + Math.pow(random(), 1.7) * 0.78;
+      const spark = random() > .965;
+      sizes[index] = spark ? 1.8 + random() : minimumSize + (maximumSize - minimumSize) * Math.pow(random(), 2.1);
+      brightness[index] = spark ? .82 + random() * .18 : .12 + Math.pow(random(), 1.7) * .88;
       phases[index] = random() * Math.PI * 2;
     }
     return { positions, sizes, brightness, phases };
@@ -71,8 +72,24 @@
     for (let index = 0; index < weights.length; index += 1) {
       const offset = index * 4;
       const alpha = data[offset + 3] / 255;
-      const luminance = (data[offset] * .2126 + data[offset + 1] * .7152 + data[offset + 2] * .0722) / 255;
-      const signal = mode === "dark" ? 1 - luminance : luminance;
+      const red = data[offset] / 255, green = data[offset + 1] / 255, blue = data[offset + 2] / 255;
+      const luminance = red * .2126 + green * .7152 + blue * .0722;
+      const distanceFromWhite = Math.sqrt((1 - red) ** 2 + (1 - green) ** 2 + (1 - blue) ** 2) / Math.sqrt(3);
+      let signal;
+      if (mode === "safe") signal = luminance < .24 ? 1 - luminance : 0;
+      else if (mode === "arbitrum") {
+        const x = index % width, y = Math.floor(index / width);
+        const radius = Math.hypot(x + .5 - width / 2, y + .5 - height / 2);
+        const innerRadius = Math.min(width, height) * .37;
+        const glyphRadius = Math.min(width, height) * .46;
+        const blueGlyph = radius < glyphRadius && blue > .52 && luminance > .34
+          && blue - red > .14 && blue - green > .055;
+        const whiteGlyph = radius < innerRadius && luminance > .82;
+        if (width < 4) signal = distanceFromWhite > .16 ? Math.max(distanceFromWhite, .72) : 0;
+        else if (whiteGlyph) signal = luminance;
+        else signal = blueGlyph && distanceFromWhite > .16 ? Math.max(distanceFromWhite, .72) : 0;
+      } else if (mode === "ens") signal = distanceFromWhite > .16 ? distanceFromWhite : 0;
+      else signal = mode === "dark" ? 1 - luminance : luminance;
       weights[index] = alpha > .04 && signal > .12 ? alpha * signal : 0;
     }
     for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
@@ -140,7 +157,7 @@
     const candidates = [];
     let totalWeight = 0;
     for (let index = 0; index < mask.weights.length; index += 1) {
-      const weight = mask.weights[index] + mask.edges[index] * 3.2;
+      const weight = mask.weights[index] * .72 + mask.edges[index] * 6.5;
       if (!weight) continue;
       totalWeight += weight;
       candidates.push({ index, cumulative: totalWeight, weight });
