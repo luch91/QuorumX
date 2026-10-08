@@ -489,23 +489,38 @@
       { src: "assets/arbitrum.webp", mode: "arbitrum" }, { src: "assets/ens.webp", mode: "ens" },
     ];
     try {
-      const masks = core.resolveParticleMasks(await Promise.all(marks.map(loadParticleMask)));
+      const rendererModulePromise = import("./particle_renderer.js");
+      const [sampledMasks, rendererModule] = await Promise.all([
+        Promise.all(marks.map(loadParticleMask)),
+        rendererModulePromise,
+      ]);
+      const masks = core.resolveParticleMasks(sampledMasks);
       const rect = canvas.getBoundingClientRect();
       const profile = core.particleProfile(Math.round(rect.width), Math.round(rect.height), innerWidth, devicePixelRatio);
       if (!profile) return;
-      const { createParticleRenderer } = await import("./particle_renderer.js");
+      const { createParticleRenderer } = rendererModule;
       const renderer = createParticleRenderer({
         canvas, masks, profile, core,
         reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
-        onReady: () => stage.classList.add("webgl-ready"),
-        onFailure: () => stage.classList.remove("webgl-ready"),
+        onReady: () => {
+          stage.classList.remove("webgl-failed");
+          stage.classList.add("webgl-ready");
+          performance.mark?.("quorumx-particles-ready");
+        },
+        onFailure: () => {
+          stage.classList.remove("webgl-ready");
+          stage.classList.add("webgl-failed");
+        },
       });
       const observer = new ResizeObserver(() => {
         const bounds = canvas.getBoundingClientRect(); renderer.resize(Math.round(bounds.width), Math.round(bounds.height)); renderer.render();
       });
       observer.observe(canvas);
       window.addEventListener("pagehide", () => { observer.disconnect(); renderer.dispose(); }, { once: true });
-    } catch { stage.classList.remove("webgl-ready"); }
+    } catch {
+      stage.classList.remove("webgl-ready");
+      stage.classList.add("webgl-failed");
+    }
   }
 
   function init() {

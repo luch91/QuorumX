@@ -36,10 +36,17 @@ describe("Three.js particle renderer integration", () => {
     expect(html).toMatch(/particles\.js[\s\S]*?app\.js/);
     expect(html).toMatch(/rel="modulepreload" href="particle_renderer\.js"/);
     expect(html).toMatch(/id="dao-particles"[\s\S]*?id="dao-particles-gpu"/);
+    expect(html).toContain('<link rel="modulepreload" href="vendor/three.module.js">');
+    expect(html).toContain('<link rel="modulepreload" href="vendor/three.core.js">');
     expect(app).toContain('import("./particle_renderer.js")');
+    expect(app.indexOf('import("./particle_renderer.js")')).toBeLessThan(app.indexOf("Promise.all(marks.map(loadParticleMask))"));
     expect(app).toMatch(/webgl-ready/);
+    expect(app).toMatch(/webgl-failed/);
+    expect(app).toContain('performance.mark?.("quorumx-particles-ready")');
     expect(app).not.toMatch(/function sampleLogo/);
     expect(css).toMatch(/\.particle-stage\.webgl-ready/);
+    expect(css).toMatch(/#dao-particles \{[^}]*opacity: 0/);
+    expect(css).toMatch(/\.particle-stage\.webgl-failed #dao-particles \{ opacity: 1; \}/);
   });
 
   test("uses the final logo geometry for both sharp particles and concentrated glow", () => {

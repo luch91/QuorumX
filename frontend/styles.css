@@ -79,9 +79,10 @@ h1 em { color: var(--gold); font-style: normal; }
 .public-note { color: var(--paper-soft); font-size: 13px; }
 .particle-stage { min-width: 0; position: relative; overflow: hidden; border-left: 1px solid var(--line); background: #060604; pointer-events: none; }
 #dao-particles, #dao-particles-gpu { position: absolute; inset: 0 0 auto; width: 100%; height: 79%; display: block; }
+#dao-particles { opacity: 0; }
 #dao-particles-gpu { z-index: 1; opacity: 0; }
 .particle-stage.webgl-ready #dao-particles-gpu { opacity: 1; }
-.particle-stage.webgl-ready #dao-particles { opacity: 0; }
+.particle-stage.webgl-failed #dao-particles { opacity: 1; }
 .particle-stage::after { content: ""; pointer-events: none; position: absolute; inset: 0; background: radial-gradient(circle at 50% 42%, transparent 25%, rgba(8,8,6,.34) 78%); }
 .particle-labels { position: absolute; z-index: 2; top: 54%; left: 3%; right: 3%; display: grid; grid-template-columns: repeat(4,1fr); text-align: center; font: 650 13px var(--sans); text-shadow: 0 1px 9px #080806; }
 .verification-path { position: absolute; z-index: 3; left: 8%; right: 8%; bottom: 30px; display: grid; grid-template-columns: repeat(3,1fr); }
