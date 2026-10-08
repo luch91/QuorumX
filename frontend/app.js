@@ -126,6 +126,18 @@
     return haystack.includes(search.trim().toLowerCase());
   }
 
+  function syncSearchInputs(inputs, source) {
+    inputs.forEach((input) => { if (input !== source) input.value = source.value; });
+  }
+
+  function setSearchPanelOpen({ toggle, panel, input }, open, returnFocus = false) {
+    panel.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-label", open ? "Close proposal search" : "Open proposal search");
+    if (open) input.focus();
+    else if (returnFocus) toggle.focus();
+  }
+
   function proposalRow(proposal) {
     const risk = assessmentSignal(proposal);
     return `<tr>
@@ -319,6 +331,8 @@
 
   function setupFilters() {
     const searchInputs = $$("[data-search]"), indexSearch = $("[data-filter-form] [data-search]");
+    const searchToggle = $("[data-search-toggle]"), searchPanel = $("[data-search-panel]");
+    const mobileSearch = $("[data-search-panel] [data-search]");
     $("[data-filter-form]").addEventListener("submit", (event) => {
       event.preventDefault();
       state.search = indexSearch.value;
@@ -327,22 +341,38 @@
     });
     searchInputs.forEach((input) => input.addEventListener("input", () => {
       state.search = input.value;
-      searchInputs.forEach((searchInput) => { if (searchInput !== input) searchInput.value = input.value; });
+      syncSearchInputs(searchInputs, input);
       renderProposals();
     }));
-    $("[data-header-search]").addEventListener("keydown", (event) => {
+    $$("[data-header-search]").forEach((input) => input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !searchPanel.hidden) {
+        event.preventDefault(); setSearchPanelOpen({ toggle: searchToggle, panel: searchPanel, input: mobileSearch }, false, true); return;
+      }
       if (event.key !== "Enter") return;
-      event.preventDefault();
-      state.search = event.currentTarget.value;
-      loadProposals(false, state.search ? 100 : 24);
-      $("#proposals").scrollIntoView({ behavior: "smooth" });
+      event.preventDefault(); state.search = event.currentTarget.value;
+      loadProposals(false, state.search ? 100 : 24); $("#proposals").scrollIntoView({ behavior: "smooth" });
+    }));
+    searchToggle.addEventListener("click", () => {
+      const open = searchPanel.hidden;
+      setSearchPanelOpen({ toggle: searchToggle, panel: searchPanel, input: mobileSearch }, open);
+      if (open) {
+        const nav = $("[data-nav]"), navToggle = $("[data-nav-toggle]");
+        nav.classList.remove("is-open"); navToggle.setAttribute("aria-expanded", "false"); navToggle.setAttribute("aria-label", "Open navigation");
+      }
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (!searchPanel.hidden && !event.target.closest("[data-header]")) setSearchPanelOpen({ toggle: searchToggle, panel: searchPanel, input: mobileSearch }, false);
     });
     $("[data-load-more]").addEventListener("click", () => loadProposals(true));
   }
 
   function setupNavigation() {
     const toggle = $("[data-nav-toggle]"), nav = $("[data-nav]");
-    toggle.addEventListener("click", () => { const open = nav.classList.toggle("is-open"); toggle.setAttribute("aria-expanded", String(open)); toggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation"); });
+    toggle.addEventListener("click", () => {
+      const open = nav.classList.toggle("is-open"); toggle.setAttribute("aria-expanded", String(open)); toggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+      const searchToggle = $("[data-search-toggle]");
+      if (open && searchToggle.getAttribute("aria-expanded") === "true") searchToggle.click();
+    });
     $$("a", nav).forEach((link) => link.addEventListener("click", () => { nav.classList.remove("is-open"); toggle.setAttribute("aria-expanded", "false"); }));
   }
 
@@ -492,5 +522,6 @@
 
   return { init, buildProposalQuery, proposalMatchesSearch, daysUntil, short, safeHttpUrl,
     assessmentLabel, assessmentSignal, renderDueDiligence, sourceCard, particleLayout, particleOrigin,
-    fallbackLogoMask, resolveLogoMasks, boundedPixelRatio, shouldSettleLogoOrigins };
+    fallbackLogoMask, resolveLogoMasks, boundedPixelRatio, shouldSettleLogoOrigins,
+    syncSearchInputs, setSearchPanelOpen };
 });

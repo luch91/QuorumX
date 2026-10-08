@@ -14,6 +14,8 @@ const {
   resolveLogoMasks,
   boundedPixelRatio,
   shouldSettleLogoOrigins,
+  syncSearchInputs,
+  setSearchPanelOpen,
 } = require("../app.js");
 
 describe("QuorumX frontend helpers", () => {
@@ -107,6 +109,31 @@ describe("QuorumX frontend helpers", () => {
     expect(proposalMatchesSearch(proposal, "safedao")).toBe(true);
     expect(proposalMatchesSearch(proposal, "0xabcd")).toBe(true);
     expect(proposalMatchesSearch(proposal, "balancer")).toBe(false);
+  });
+
+  test("synchronizes every search control from the active input", () => {
+    const source = { value: "SafeDAO" };
+    const peer = { value: "" };
+
+    syncSearchInputs([source, peer], source);
+
+    expect(peer.value).toBe("SafeDAO");
+  });
+
+  test("opens and closes responsive search with accessible focus management", () => {
+    const toggle = { setAttribute: jest.fn(), focus: jest.fn() };
+    const panel = { hidden: true };
+    const input = { focus: jest.fn() };
+
+    setSearchPanelOpen({ toggle, panel, input }, true);
+    expect(panel.hidden).toBe(false);
+    expect(toggle.setAttribute).toHaveBeenCalledWith("aria-expanded", "true");
+    expect(input.focus).toHaveBeenCalledTimes(1);
+
+    setSearchPanelOpen({ toggle, panel, input }, false, true);
+    expect(panel.hidden).toBe(true);
+    expect(toggle.setAttribute).toHaveBeenCalledWith("aria-expanded", "false");
+    expect(toggle.focus).toHaveBeenCalledTimes(1);
   });
 
   test("calculates whole voting days remaining", () => {
