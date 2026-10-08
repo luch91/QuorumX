@@ -2,6 +2,9 @@ const {
   seededRandom,
   particleProfile,
   buildAtmosphere,
+  normalizeMaskPixels,
+  sampleLogoMask,
+  resolveParticleMasks,
 } = require("../particles.js");
 const { existsSync, readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
@@ -53,5 +56,46 @@ describe("GPU particle core", () => {
     expect([...first.positions.slice(0, 24)]).toEqual([...second.positions.slice(0, 24)]);
     expect(Math.max(...first.sizes)).toBeLessThanOrEqual(1.45);
     expect(Math.min(...first.sizes)).toBeGreaterThanOrEqual(0.349);
+  });
+
+  test("normalizes source pixels and assigns extra weight to sharp edges", () => {
+    const data = new Uint8ClampedArray(5 * 5 * 4);
+    for (let y = 1; y < 4; y += 1) for (let x = 1; x < 4; x += 1) {
+      const offset = (y * 5 + x) * 4;
+      data[offset] = data[offset + 1] = data[offset + 2] = 255;
+      data[offset + 3] = 255;
+    }
+
+    const mask = normalizeMaskPixels({ data, width: 5, height: 5 }, "light");
+
+    expect(mask.weights[2 * 5 + 2]).toBeGreaterThan(0);
+    expect(mask.edges[1 * 5 + 1]).toBeGreaterThan(mask.edges[2 * 5 + 2]);
+    expect(mask.weights[0]).toBe(0);
+  });
+
+  test("samples deterministic dense logo buffers at final normalized positions", () => {
+    const data = new Uint8ClampedArray(8 * 8 * 4).fill(255);
+    const mask = normalizeMaskPixels({ data, width: 8, height: 8 }, "light");
+    const profile = { ...particleProfile(390, 420, 390, 2), logoCount: 120 };
+    const first = sampleLogoMask(mask, profile, 41);
+    const second = sampleLogoMask(mask, profile, 41);
+
+    expect(first.positions).toHaveLength(360);
+    expect(first.targets).toBe(first.positions);
+    expect([...first.positions]).toEqual([...second.positions]);
+    expect(first.brightness).toHaveLength(120);
+    expect(Math.max(...first.sizes)).toBeLessThanOrEqual(1.7);
+  });
+
+  test("resolves mixed malformed masks independently and preserves four identities", () => {
+    const valid = normalizeMaskPixels({ data: new Uint8ClampedArray(4 * 4 * 4).fill(255), width: 4, height: 4 }, "light");
+    const masks = resolveParticleMasks([valid, null, { width: 0 }, valid]);
+
+    expect(masks).toHaveLength(4);
+    expect(masks[0].weights).toBe(valid.weights);
+    expect(masks[3].weights).toBe(valid.weights);
+    expect(masks[1].source).toBe("procedural");
+    expect(masks[2].source).toBe("procedural");
+    expect(new Set(masks.map((mask) => mask.identity)).size).toBe(4);
   });
 });
