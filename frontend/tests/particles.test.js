@@ -33,6 +33,10 @@ describe("GPU particle core", () => {
 
   test.each([
     [1467, 367, 1467, 3, "reference", 60000, 46000, 3600, 2],
+    [1101, 299, 1101, 1, "reference", 60000, 46000, 3600, 1],
+    [1100, 420, 1100, 1, "tablet", 38000, 30000, 2800, 1],
+    [821, 420, 821, 1, "tablet", 38000, 30000, 2800, 1],
+    [820, 360, 820, 1, "mobile", 18000, 14000, 1800, 1],
     [1024, 500, 1024, 1, "tablet", 38000, 30000, 2800, 1],
     [390, 420, 390, 4, "mobile", 18000, 14000, 1800, 2],
   ])("selects bounded %s px particle profiles", (width, height, viewportWidth, dpr, name, atmosphere, flow, logo, pixelRatio) => {

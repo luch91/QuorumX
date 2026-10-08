@@ -80,4 +80,20 @@ describe("Three.js particle renderer integration", () => {
     expect(css).toMatch(/span:nth-child\(4\) \{ left: 81%; \}/);
     expect(css).toMatch(/\.particle-labels \{ top: 60%;/);
   });
+
+  test("rebuilds GPU geometry when a live resize crosses a responsive profile boundary", () => {
+    const app = source("frontend/app.js");
+
+    expect(app).toMatch(/nextProfile\.name !== activeProfileName/);
+    expect(app).toMatch(/renderer\.dispose\(\)[\s\S]*?mountRenderer\(nextProfile\)/);
+  });
+
+  test("bounds only tablet and mobile hero dimensions while preserving desktop geometry", () => {
+    const css = source("frontend/styles.css");
+
+    expect(css).toMatch(/@media \(min-width: 1101px\)[\s\S]*?\.hero \{ height: 299px; min-height: 299px; grid-template-columns: 34% 66%; \}/);
+    expect(css).toMatch(/@media \(min-width: 821px\) and \(max-width: 1100px\)[\s\S]*?\.hero \{ height: clamp\(360px, 46vw, 440px\); min-height: 360px;/);
+    expect(css).toMatch(/@media \(max-width: 820px\)[\s\S]*?\.particle-stage \{ height: clamp\(280px, 70vw, 390px\); min-height: 280px;/);
+    expect(css).toMatch(/@media \(max-width: 580px\)[\s\S]*?\.hero-actions \{ flex-wrap: wrap;/);
+  });
 });

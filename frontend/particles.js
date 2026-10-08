@@ -19,12 +19,12 @@
   function particleProfile(width, height, viewportWidth = width, dpr = 1) {
     if (!(width > 0) || !(height > 0)) return null;
     const pixelRatio = Number.isFinite(dpr) && dpr > 0 ? Math.min(dpr, 2) : 1;
-    if (viewportWidth >= 1100) return {
+    if (viewportWidth > 1100) return {
       name: "reference", width, height, pixelRatio,
       atmosphereCount: 60000, flowCount: 46000, logoCount: 3600,
       pointSize: [0.35, 1.45], seed: 0x51f15e,
     };
-    if (viewportWidth >= 820) return {
+    if (viewportWidth > 820) return {
       name: "tablet", width, height, pixelRatio,
       atmosphereCount: 38000, flowCount: 30000, logoCount: 2800,
       pointSize: [0.35, 1.35], seed: 0x51f15e,

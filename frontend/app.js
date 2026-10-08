@@ -35,7 +35,7 @@
 
   function particleLayout(width, height, reducedMotion = false, viewportWidth = width) {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-    const profile = viewportWidth < 820 ? "mobile" : viewportWidth < 1100 ? "tablet" : "desktop";
+    const profile = viewportWidth <= 820 ? "mobile" : viewportWidth <= 1100 ? "tablet" : "desktop";
     const mobile = profile === "mobile";
     const centerRatios = [0.125, 0.375, 0.625, 0.875];
     return {
@@ -505,23 +505,36 @@
       const profile = core.particleProfile(Math.round(rect.width), Math.round(rect.height), innerWidth, devicePixelRatio);
       if (!profile) return;
       const { createParticleRenderer } = rendererModule;
-      const renderer = createParticleRenderer({
-        canvas, masks, profile, core,
-        reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
-        onReady: () => {
-          stage.classList.remove("webgl-loading");
-          stage.classList.remove("webgl-failed");
-          stage.classList.add("webgl-ready");
-          performance.mark?.("quorumx-particles-ready");
-        },
-        onFailure: () => {
-          stage.classList.remove("webgl-loading");
-          stage.classList.remove("webgl-ready");
-          stage.classList.add("webgl-failed");
-        },
-      });
+      let renderer, activeProfileName;
+      const mountRenderer = (nextProfile) => {
+        activeProfileName = nextProfile.name;
+        renderer = createParticleRenderer({
+          canvas, masks, profile: nextProfile, core,
+          reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+          onReady: () => {
+            stage.classList.remove("webgl-loading");
+            stage.classList.remove("webgl-failed");
+            stage.classList.add("webgl-ready");
+            performance.mark?.("quorumx-particles-ready");
+          },
+          onFailure: () => {
+            stage.classList.remove("webgl-loading");
+            stage.classList.remove("webgl-ready");
+            stage.classList.add("webgl-failed");
+          },
+        });
+      };
+      mountRenderer(profile);
       const observer = new ResizeObserver(() => {
-        const bounds = canvas.getBoundingClientRect(); renderer.resize(Math.round(bounds.width), Math.round(bounds.height)); renderer.render();
+        const bounds = canvas.getBoundingClientRect();
+        const nextProfile = core.particleProfile(Math.round(bounds.width), Math.round(bounds.height), innerWidth, devicePixelRatio);
+        if (!nextProfile) return;
+        if (nextProfile.name !== activeProfileName) {
+          renderer.dispose();
+          mountRenderer(nextProfile);
+          return;
+        }
+        renderer.resize(Math.round(bounds.width), Math.round(bounds.height)); renderer.render();
       });
       observer.observe(canvas);
       window.addEventListener("pagehide", () => { observer.disconnect(); renderer.dispose(); }, { once: true });
