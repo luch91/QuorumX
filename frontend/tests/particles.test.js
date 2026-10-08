@@ -1,6 +1,7 @@
 const {
   seededRandom,
   particleProfile,
+  heroArtworkLayout,
   buildAtmosphere,
   normalizeMaskPixels,
   sampleLogoMask,
@@ -48,6 +49,42 @@ describe("GPU particle core", () => {
   test("defers zero-sized geometry", () => {
     expect(particleProfile(0, 367, 1467, 1)).toBeNull();
     expect(particleProfile(1467, 0, 1467, 1)).toBeNull();
+  });
+
+  test("preserves approved desktop targets while evenly spacing responsive targets", () => {
+    expect(heroArtworkLayout(966, 299, 1440)).toMatchObject({
+      mode: "reference",
+      centerRatios: [.09, .31, .55, .81],
+      centerNdc: [-.82, -.38, .1, .62],
+      logoCenterY: .2,
+      labelTopRatio: .6,
+    });
+    expect(heroArtworkLayout(390, 280, 390)).toMatchObject({
+      mode: "mobile",
+      centerRatios: [.125, .375, .625, .875],
+      centerNdc: [-.75, -.25, .25, .75],
+      labelTopRatio: .58,
+    });
+    expect(heroArtworkLayout(594, 420, 1024).centerRatios).toEqual([.125, .375, .625, .875]);
+  });
+
+  test("derives undistorted responsive logo scales from actual canvas dimensions", () => {
+    const portrait = heroArtworkLayout(390, 280, 390);
+    const landscape = heroArtworkLayout(667, 240, 667);
+
+    expect(portrait.logoWidths[2] * 390).toBeCloseTo(portrait.logoHeights[2] * 280, 5);
+    expect(landscape.logoWidths[2] * 667).toBeCloseTo(landscape.logoHeights[2] * 240, 5);
+    expect(portrait.logoPixelSizes[0]).toBeGreaterThan(portrait.logoPixelSizes[2]);
+    expect(portrait.logoPixelSizes[1]).toBeGreaterThan(portrait.logoPixelSizes[2]);
+  });
+
+  test("changes renderer identity when orientation or device pixel ratio changes", () => {
+    const portrait = particleProfile(390, 280, 390, 2);
+    const landscape = particleProfile(667, 240, 667, 2);
+    const differentDpr = particleProfile(390, 280, 390, 1);
+
+    expect(portrait.renderKey).not.toBe(landscape.renderKey);
+    expect(portrait.renderKey).not.toBe(differentDpr.renderKey);
   });
 
   test("builds deterministic fine-grained atmosphere attributes", () => {

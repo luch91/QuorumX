@@ -76,15 +76,15 @@ describe("Three.js particle renderer integration", () => {
     expect(renderer).toMatch(/aOrigin/);
     expect(css).toMatch(/height: 299px; min-height: 299px/);
     expect(css).toMatch(/#dao-particles, #dao-particles-gpu \{ height: 100%; \}/);
-    expect(css).toMatch(/span:nth-child\(1\) \{ left: 9%; \}/);
-    expect(css).toMatch(/span:nth-child\(4\) \{ left: 81%; \}/);
-    expect(css).toMatch(/\.particle-labels \{ top: 60%;/);
+    expect(css).toMatch(/span:nth-child\(1\) \{ left: var\(--dao-1-x,9%\); \}/);
+    expect(css).toMatch(/span:nth-child\(4\) \{ left: var\(--dao-4-x,81%\); \}/);
+    expect(css).toMatch(/top: var\(--dao-label-top,60%\)/);
   });
 
   test("rebuilds GPU geometry when a live resize crosses a responsive profile boundary", () => {
     const app = source("frontend/app.js");
 
-    expect(app).toMatch(/nextProfile\.name !== activeProfileName/);
+    expect(app).toMatch(/nextProfile\.renderKey !== activeRenderKey/);
     expect(app).toMatch(/renderer\.dispose\(\)[\s\S]*?mountRenderer\(nextProfile\)/);
   });
 
@@ -92,8 +92,10 @@ describe("Three.js particle renderer integration", () => {
     const css = source("frontend/styles.css");
 
     expect(css).toMatch(/@media \(min-width: 1101px\)[\s\S]*?\.hero \{ height: 299px; min-height: 299px; grid-template-columns: 34% 66%; \}/);
+    expect(css).toMatch(/@media \(min-width: 1101px\)[\s\S]*?\.hero h1 \{ font-size: clamp\(36px,2\.73vw,40px\);/);
+    expect(css).toMatch(/\.hero-actions \.button \{ white-space: nowrap; flex-shrink: 0; \}/);
     expect(css).toMatch(/@media \(min-width: 821px\) and \(max-width: 1100px\)[\s\S]*?\.hero \{ height: clamp\(360px, 46vw, 440px\); min-height: 360px;/);
-    expect(css).toMatch(/@media \(max-width: 820px\)[\s\S]*?\.particle-stage \{ height: clamp\(280px, 70vw, 390px\); min-height: 280px;/);
+    expect(css).toMatch(/@media \(max-width: 820px\)[\s\S]*?\.particle-stage \{ height: clamp\(270px, 52vw, 330px\); min-height: 270px;/);
     expect(css).toMatch(/@media \(max-width: 580px\)[\s\S]*?\.hero-actions \{ flex-wrap: wrap;/);
   });
 });

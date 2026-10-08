@@ -64,9 +64,9 @@ function material({ color, opacity, pointScale, pixelRatio, reducedMotion, hover
 }
 
 function combineLogos(core, masks, profile) {
-  const centers = [-.82, -.38, .1, .62];
-  const centerY = profile.name === "reference" ? .2 : profile.name === "tablet" ? .34 : .24;
-  const widths = [.105, .105, .1, .09], heights = [.27, .27, .3, .27];
+  const centers = profile.centerNdc;
+  const centerY = profile.logoCenterY;
+  const widths = profile.logoWidths, heights = profile.logoHeights;
   const buffers = masks.map((mask, index) => core.sampleLogoMask(mask, profile, profile.seed + index * 997));
   const total = profile.logoCount * 4;
   const positions = new Float32Array(total * 3), sizes = new Float32Array(total);
@@ -91,8 +91,8 @@ function combineLogos(core, masks, profile) {
 function flowData(core, profile) {
   const flow = core.buildAtmosphere({ ...profile, atmosphereCount: profile.flowCount }, profile.seed ^ 0x91e10da5);
   const random = core.seededRandom(profile.seed ^ 0x4f1bbcdc);
-  const centers = [-.82, -.38, .1, .62];
-  const centerY = profile.name === "reference" ? .2 : profile.name === "tablet" ? .34 : .24;
+  const centers = profile.centerNdc;
+  const centerY = profile.logoCenterY;
   for (let index = 0; index < profile.flowCount; index += 1) {
     const offset = index * 3, x = flow.positions[offset];
     if (random() < .74) {

@@ -505,9 +505,14 @@
       const profile = core.particleProfile(Math.round(rect.width), Math.round(rect.height), innerWidth, devicePixelRatio);
       if (!profile) return;
       const { createParticleRenderer } = rendererModule;
-      let renderer, activeProfileName;
+      let renderer, activeRenderKey, resizeFrame = 0;
+      const syncArtworkLayout = (nextProfile) => {
+        nextProfile.centerRatios.forEach((ratio, index) => stage.style.setProperty(`--dao-${index + 1}-x`, `${ratio * 100}%`));
+        stage.style.setProperty("--dao-label-top", `${nextProfile.labelTopRatio * 100}%`);
+      };
       const mountRenderer = (nextProfile) => {
-        activeProfileName = nextProfile.name;
+        activeRenderKey = nextProfile.renderKey;
+        syncArtworkLayout(nextProfile);
         renderer = createParticleRenderer({
           canvas, masks, profile: nextProfile, core,
           reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -526,18 +531,22 @@
       };
       mountRenderer(profile);
       const observer = new ResizeObserver(() => {
-        const bounds = canvas.getBoundingClientRect();
-        const nextProfile = core.particleProfile(Math.round(bounds.width), Math.round(bounds.height), innerWidth, devicePixelRatio);
-        if (!nextProfile) return;
-        if (nextProfile.name !== activeProfileName) {
-          renderer.dispose();
-          mountRenderer(nextProfile);
-          return;
-        }
-        renderer.resize(Math.round(bounds.width), Math.round(bounds.height)); renderer.render();
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+          const bounds = canvas.getBoundingClientRect();
+          const nextProfile = core.particleProfile(Math.round(bounds.width), Math.round(bounds.height), innerWidth, devicePixelRatio);
+          if (!nextProfile) return;
+          if (nextProfile.renderKey !== activeRenderKey) {
+            renderer.dispose();
+            mountRenderer(nextProfile);
+            return;
+          }
+          syncArtworkLayout(nextProfile);
+          renderer.resize(Math.round(bounds.width), Math.round(bounds.height)); renderer.render();
+        });
       });
       observer.observe(canvas);
-      window.addEventListener("pagehide", () => { observer.disconnect(); renderer.dispose(); }, { once: true });
+      window.addEventListener("pagehide", () => { cancelAnimationFrame(resizeFrame); observer.disconnect(); renderer.dispose(); }, { once: true });
     } catch {
       stage.classList.remove("webgl-loading");
       stage.classList.remove("webgl-ready");

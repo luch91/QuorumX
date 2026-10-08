@@ -16,21 +16,52 @@
     };
   }
 
+  function heroArtworkLayout(width, height, viewportWidth = width) {
+    if (!(width > 0) || !(height > 0)) return null;
+    const mode = viewportWidth > 1100 ? "reference" : viewportWidth > 820 ? "tablet" : "mobile";
+    if (mode === "reference") return {
+      mode,
+      centerRatios: [.09, .31, .55, .81],
+      centerNdc: [-.82, -.38, .1, .62],
+      logoCenterY: .2,
+      labelTopRatio: .6,
+      logoWidths: [.105, .105, .1, .09],
+      logoHeights: [.27, .27, .3, .27],
+      logoPixelSizes: [width * .105, width * .105, width * .1, width * .09],
+    };
+    const centerRatios = [.125, .375, .625, .875];
+    const maximum = mode === "tablet" ? 92 : 68;
+    const baseSize = Math.min(width / 4 * .62, height * .28, maximum);
+    const logoPixelSizes = [1.08, 1.08, 1, .94].map((scale) => baseSize * scale);
+    return {
+      mode,
+      centerRatios,
+      centerNdc: [-.75, -.25, .25, .75],
+      logoCenterY: .2,
+      labelTopRatio: .58,
+      logoWidths: logoPixelSizes.map((size) => size / width),
+      logoHeights: logoPixelSizes.map((size) => size / height),
+      logoPixelSizes,
+    };
+  }
+
   function particleProfile(width, height, viewportWidth = width, dpr = 1) {
     if (!(width > 0) || !(height > 0)) return null;
     const pixelRatio = Number.isFinite(dpr) && dpr > 0 ? Math.min(dpr, 2) : 1;
+    const artwork = heroArtworkLayout(width, height, viewportWidth);
+    const renderKey = `${artwork.mode}:${Math.round(width)}x${Math.round(height)}@${pixelRatio}`;
     if (viewportWidth > 1100) return {
-      name: "reference", width, height, pixelRatio,
+      name: "reference", width, height, pixelRatio, renderKey, ...artwork,
       atmosphereCount: 60000, flowCount: 46000, logoCount: 3600,
       pointSize: [0.35, 1.45], seed: 0x51f15e,
     };
     if (viewportWidth > 820) return {
-      name: "tablet", width, height, pixelRatio,
+      name: "tablet", width, height, pixelRatio, renderKey, ...artwork,
       atmosphereCount: 38000, flowCount: 30000, logoCount: 2800,
       pointSize: [0.35, 1.35], seed: 0x51f15e,
     };
     return {
-      name: "mobile", width, height, pixelRatio,
+      name: "mobile", width, height, pixelRatio, renderKey, ...artwork,
       atmosphereCount: 18000, flowCount: 14000, logoCount: 1800,
       pointSize: [0.35, 1.2], seed: 0x51f15e,
     };
@@ -211,7 +242,7 @@
   }
 
   return {
-    seededRandom, particleProfile, buildAtmosphere,
+    seededRandom, heroArtworkLayout, particleProfile, buildAtmosphere,
     normalizeMaskPixels, sampleLogoMask, resolveParticleMasks, swooshOrigin,
   };
 });
