@@ -92,6 +92,21 @@
       else signal = mode === "dark" ? 1 - luminance : luminance;
       weights[index] = alpha > .04 && signal > .12 ? alpha * signal : 0;
     }
+    if (mode === "arbitrum" && width >= 32 && height >= 32) {
+      const vertices = [[.5, .05], [.9, .28], [.9, .72], [.5, .94], [.1, .72], [.1, .28], [.5, .05]]
+        .map(([x, y]) => [x * width, y * height]);
+      const thickness = Math.min(width, height) * .035;
+      for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+        let distance = Infinity;
+        for (let segment = 0; segment < vertices.length - 1; segment += 1) {
+          const [x1, y1] = vertices[segment], [x2, y2] = vertices[segment + 1];
+          const dx = x2 - x1, dy = y2 - y1;
+          const ratio = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)));
+          distance = Math.min(distance, Math.hypot(x - (x1 + ratio * dx), y - (y1 + ratio * dy)));
+        }
+        if (distance <= thickness) weights[y * width + x] = Math.max(weights[y * width + x], .78);
+      }
+    }
     for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
       const index = y * width + x;
       if (!weights[index]) continue;
@@ -188,8 +203,15 @@
     return { positions, targets: positions, sizes, brightness, phases };
   }
 
+  function swooshOrigin(targetX, targetY, phase, logoIndex) {
+    return {
+      x: targetX - .32 - logoIndex * .06 + Math.cos(phase) * .11,
+      y: targetY + Math.sin(phase) * .24 + (logoIndex % 2 ? .035 : -.035),
+    };
+  }
+
   return {
     seededRandom, particleProfile, buildAtmosphere,
-    normalizeMaskPixels, sampleLogoMask, resolveParticleMasks,
+    normalizeMaskPixels, sampleLogoMask, resolveParticleMasks, swooshOrigin,
   };
 });

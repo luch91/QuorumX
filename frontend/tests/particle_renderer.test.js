@@ -55,9 +55,12 @@ describe("Three.js particle renderer integration", () => {
 
     expect(renderer).toMatch(/uHover/);
     expect(renderer).toMatch(/flowMaterial[\s\S]*?hover: 1/);
+    expect(renderer).toMatch(/uAssembly/);
+    expect(renderer).toMatch(/aOrigin/);
     expect(css).toMatch(/height: 299px; min-height: 299px/);
     expect(css).toMatch(/#dao-particles, #dao-particles-gpu \{ height: 100%; \}/);
     expect(css).toMatch(/span:nth-child\(1\) \{ left: 9%; \}/);
     expect(css).toMatch(/span:nth-child\(4\) \{ left: 81%; \}/);
+    expect(css).toMatch(/\.particle-labels \{ top: 60%;/);
   });
 });

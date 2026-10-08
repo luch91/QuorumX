@@ -4,14 +4,21 @@ const vertexShader = `
 attribute float aSize;
 attribute float aBrightness;
 attribute float aPhase;
+attribute vec3 aOrigin;
 uniform float uTime;
 uniform float uMotion;
 uniform float uPixelRatio;
 uniform float uPointScale;
 uniform float uHover;
+uniform float uAssembly;
 varying float vBrightness;
 void main() {
   vec3 transformed = position;
+  float settle = smoothstep(0.0, 1.0, clamp(uTime / 1400.0, 0.0, 1.0));
+  float travel = (1.0 - settle) * uAssembly;
+  transformed = mix(transformed, aOrigin, travel);
+  transformed.x += sin(aPhase + settle * 7.5) * .13 * travel;
+  transformed.y += cos(aPhase * 1.31 + settle * 6.2) * .085 * travel;
   float orbit = uTime * .00016 + aPhase;
   transformed.x += (sin(uTime * .00012 + aPhase) * .0028 + cos(orbit) * .012 * uHover) * uMotion;
   transformed.y += (cos(uTime * .0001 + aPhase * 1.37) * .0035 + sin(orbit * 1.17) * .015 * uHover) * uMotion;
@@ -38,10 +45,11 @@ function attributes(geometry, data) {
   geometry.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
   geometry.setAttribute("aBrightness", new THREE.BufferAttribute(data.brightness, 1));
   geometry.setAttribute("aPhase", new THREE.BufferAttribute(data.phases, 1));
+  if (data.origins) geometry.setAttribute("aOrigin", new THREE.BufferAttribute(data.origins, 3));
   return geometry;
 }
 
-function material({ color, opacity, pointScale, pixelRatio, reducedMotion, hover = 0 }) {
+function material({ color, opacity, pointScale, pixelRatio, reducedMotion, hover = 0, assembly = 0 }) {
   return new THREE.ShaderMaterial({
     vertexShader, fragmentShader, transparent: true, depthWrite: false,
     blending: THREE.AdditiveBlending,
@@ -49,6 +57,7 @@ function material({ color, opacity, pointScale, pixelRatio, reducedMotion, hover
       uTime: { value: 0 }, uMotion: { value: reducedMotion ? 0 : 1 },
       uPixelRatio: { value: pixelRatio }, uPointScale: { value: pointScale },
       uHover: { value: hover },
+      uAssembly: { value: reducedMotion ? 0 : assembly },
       uColor: { value: new THREE.Color(color) }, uOpacity: { value: opacity },
     },
   });
@@ -61,7 +70,7 @@ function combineLogos(core, masks, profile) {
   const buffers = masks.map((mask, index) => core.sampleLogoMask(mask, profile, profile.seed + index * 997));
   const total = profile.logoCount * 4;
   const positions = new Float32Array(total * 3), sizes = new Float32Array(total);
-  const brightness = new Float32Array(total), phases = new Float32Array(total);
+  const origins = new Float32Array(total * 3), brightness = new Float32Array(total), phases = new Float32Array(total);
   buffers.forEach((buffer, logo) => {
     for (let index = 0; index < profile.logoCount; index += 1) {
       const source = index * 3, target = (logo * profile.logoCount + index) * 3;
@@ -69,12 +78,14 @@ function combineLogos(core, masks, profile) {
       positions[target + 1] = centerY + buffer.positions[source + 1] * heights[logo];
       positions[target + 2] = .35 + buffer.positions[source + 2];
       const attribute = logo * profile.logoCount + index;
+      const origin = core.swooshOrigin(positions[target], positions[target + 1], buffer.phases[index], logo);
+      origins[target] = origin.x; origins[target + 1] = origin.y; origins[target + 2] = positions[target + 2];
       sizes[attribute] = buffer.sizes[index] * 1.04;
       brightness[attribute] = buffer.brightness[index];
       phases[attribute] = buffer.phases[index];
     }
   });
-  return { positions, sizes, brightness, phases };
+  return { positions, origins, sizes, brightness, phases };
 }
 
 function flowData(core, profile) {
@@ -116,29 +127,31 @@ export function createParticleRenderer({ canvas, masks, profile, core, reducedMo
   const logoGeometry = new THREE.BufferGeometry();
   const atmosphereMaterial = material({ color: 0xd99d24, opacity: .9, pointScale: 1.22, pixelRatio: profile.pixelRatio, reducedMotion });
   const flowMaterial = material({ color: 0xf0ae2a, opacity: .9, pointScale: 1.1, pixelRatio: profile.pixelRatio, reducedMotion, hover: 1 });
-  const logoGlowMaterial = material({ color: 0xf2aa2d, opacity: .28, pointScale: 2.8, pixelRatio: profile.pixelRatio, reducedMotion });
-  const logoMaterial = material({ color: 0xffedaa, opacity: 1, pointScale: 1.08, pixelRatio: profile.pixelRatio, reducedMotion });
+  const logoGlowMaterial = material({ color: 0xf2aa2d, opacity: .28, pointScale: 2.8, pixelRatio: profile.pixelRatio, reducedMotion, assembly: 1 });
+  const logoMaterial = material({ color: 0xffedaa, opacity: 1, pointScale: 1.08, pixelRatio: profile.pixelRatio, reducedMotion, assembly: 1 });
   const atmosphere = new THREE.Points(attributes(atmosphereGeometry, core.buildAtmosphere(profile, profile.seed)), atmosphereMaterial);
   const flow = new THREE.Points(attributes(flowGeometry, flowData(core, profile)), flowMaterial);
   const logos = new THREE.Points(attributes(logoGeometry, combineLogos(core, masks, profile)), logoMaterial);
   const logoGlow = new THREE.Points(logoGeometry, logoGlowMaterial);
   scene.add(atmosphere, flow, logoGlow, logos);
 
-  let frame = 0, paused = false, disposed = false, restoreAttempted = false;
+  let frame = 0, paused = false, disposed = false, restoreAttempted = false, startedAt = null, lastTime = 0;
   const materials = [atmosphereMaterial, flowMaterial, logoGlowMaterial, logoMaterial];
   function resize(width = canvas.clientWidth, height = canvas.clientHeight) {
     if (!(width > 0) || !(height > 0) || disposed) return false;
     renderer.setPixelRatio(profile.pixelRatio); renderer.setSize(width, height, false);
     return true;
   }
-  function render(time = 0) {
+  function render(time = lastTime) {
     if (disposed) return;
+    lastTime = time;
     materials.forEach((entry) => { entry.uniforms.uTime.value = time; });
     renderer.render(scene, camera);
   }
   function tick(time) {
     if (paused || disposed || reducedMotion) return;
-    render(time); frame = requestAnimationFrame(tick);
+    if (startedAt === null) startedAt = time;
+    render(time - startedAt); frame = requestAnimationFrame(tick);
   }
   function pause() { paused = true; cancelAnimationFrame(frame); }
   function resume() { if (!paused || disposed || reducedMotion) return; paused = false; frame = requestAnimationFrame(tick); }

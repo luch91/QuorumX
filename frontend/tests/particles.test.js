@@ -5,6 +5,7 @@ const {
   normalizeMaskPixels,
   sampleLogoMask,
   resolveParticleMasks,
+  swooshOrigin,
 } = require("../particles.js");
 const { existsSync, readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
@@ -102,6 +103,26 @@ describe("GPU particle core", () => {
     expect(mask.weights[2 * 5 + 2]).toBeGreaterThan(0);
     expect(mask.weights[2 * 5 + 3]).toBeGreaterThan(0);
     expect(mask.weights[2 * 5 + 1]).toBeGreaterThan(0);
+  });
+
+  test("repairs the continuous lower-left Arbitrum shield border", () => {
+    const width = 40, height = 40;
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let index = 0; index < width * height; index += 1) {
+      data.set([31, 53, 72, 255], index * 4);
+    }
+
+    const mask = normalizeMaskPixels({ data, width, height }, "arbitrum");
+    expect(mask.weights[33 * width + 12]).toBeGreaterThan(0);
+  });
+
+  test("creates deterministic off-target swoosh origins for logo assembly", () => {
+    const first = swooshOrigin(.2, .1, Math.PI / 3, 2);
+    const second = swooshOrigin(.2, .1, Math.PI / 3, 2);
+
+    expect(first).toEqual(second);
+    expect(first.x).toBeLessThan(0);
+    expect(Math.hypot(first.x - .2, first.y - .1)).toBeGreaterThan(.2);
   });
 
   test("samples deterministic dense logo buffers at final normalized positions", () => {

@@ -100,7 +100,7 @@ h1 em { color: var(--gold); font-style: normal; }
   .hero-actions { margin-top: 12px; }
   .particle-stage { height: 299px; min-height: 0; }
   #dao-particles, #dao-particles-gpu { height: 100%; }
-  .particle-labels { top: 66%; left: 0; right: 0; display: block; }
+  .particle-labels { top: 60%; left: 0; right: 0; display: block; }
   .particle-labels span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
   .particle-labels span:nth-child(1) { left: 9%; }
   .particle-labels span:nth-child(2) { left: 31%; }
