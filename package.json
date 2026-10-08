@@ -30,6 +30,7 @@
     "smoke:sentinel": "node dist/src/smoke_cli.js",
     "preflight:sentinel": "node dist/src/preflight_cli.js",
     "metrics:sentinel": "node dist/src/metrics_cli.js",
+    "stage:three": "node scripts/stage_three.cjs",
     "check:open-questions": "bash scripts/check_open_questions.sh",
     "verify:v3.3-release": "node scripts/verify_v3_3_release.cjs"
   },
@@ -46,6 +47,7 @@
     "@x402/fetch": "^2.27.0",
     "genlayer-js": "1.1.8",
     "pg": "^8.16.3",
+    "three": "0.186.1",
     "viem": "^2.56.9"
   },
   "overrides": {
