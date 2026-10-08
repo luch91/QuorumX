@@ -34,6 +34,7 @@ describe("Three.js particle renderer integration", () => {
     const css = source("frontend/styles.css");
 
     expect(html).toMatch(/particles\.js[\s\S]*?app\.js/);
+    expect(html).toMatch(/rel="modulepreload" href="particle_renderer\.js"/);
     expect(html).toMatch(/id="dao-particles"[\s\S]*?id="dao-particles-gpu"/);
     expect(app).toContain('import("./particle_renderer.js")');
     expect(app).toMatch(/webgl-ready/);
@@ -46,5 +47,17 @@ describe("Three.js particle renderer integration", () => {
 
     expect(renderer).toMatch(/new THREE\.Points\(logoGeometry, logoGlowMaterial\)/);
     expect(renderer).toMatch(/new THREE\.Points\(attributes\(logoGeometry,[\s\S]*?\), logoMaterial\)/);
+  });
+
+  test("orbits the surrounding flow while keeping the logo core stable in a reference-height hero", () => {
+    const renderer = source("frontend/particle_renderer.js");
+    const css = source("frontend/styles.css");
+
+    expect(renderer).toMatch(/uHover/);
+    expect(renderer).toMatch(/flowMaterial[\s\S]*?hover: 1/);
+    expect(css).toMatch(/height: 299px; min-height: 299px/);
+    expect(css).toMatch(/#dao-particles, #dao-particles-gpu \{ height: 100%; \}/);
+    expect(css).toMatch(/span:nth-child\(1\) \{ left: 9%; \}/);
+    expect(css).toMatch(/span:nth-child\(4\) \{ left: 81%; \}/);
   });
 });

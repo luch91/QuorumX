@@ -94,12 +94,14 @@ describe("GPU particle core", () => {
     paint(2, 1, [31, 53, 72]);
     paint(2, 2, [248, 249, 250]);
     paint(3, 2, [24, 171, 226]);
+    paint(1, 2, [180, 215, 238]);
 
     const mask = normalizeMaskPixels({ data, width: 5, height: 5 }, "arbitrum");
     expect(mask.weights[0]).toBe(0);
     expect(mask.weights[1 * 5 + 2]).toBe(0);
     expect(mask.weights[2 * 5 + 2]).toBeGreaterThan(0);
     expect(mask.weights[2 * 5 + 3]).toBeGreaterThan(0);
+    expect(mask.weights[2 * 5 + 1]).toBeGreaterThan(0);
   });
 
   test("samples deterministic dense logo buffers at final normalized positions", () => {

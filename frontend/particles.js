@@ -81,9 +81,9 @@
         const x = index % width, y = Math.floor(index / width);
         const radius = Math.hypot(x + .5 - width / 2, y + .5 - height / 2);
         const innerRadius = Math.min(width, height) * .37;
-        const glyphRadius = Math.min(width, height) * .46;
+        const glyphRadius = Math.min(width, height) * .47;
         const blueGlyph = radius < glyphRadius && blue > .52 && luminance > .34
-          && blue - red > .14 && blue - green > .055;
+          && blue - red > .07 && blue - green > .02;
         const whiteGlyph = radius < innerRadius && luminance > .82;
         if (width < 4) signal = distanceFromWhite > .16 ? Math.max(distanceFromWhite, .72) : 0;
         else if (whiteGlyph) signal = luminance;

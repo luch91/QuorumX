@@ -8,11 +8,13 @@ uniform float uTime;
 uniform float uMotion;
 uniform float uPixelRatio;
 uniform float uPointScale;
+uniform float uHover;
 varying float vBrightness;
 void main() {
   vec3 transformed = position;
-  transformed.x += sin(uTime * .00012 + aPhase) * .0028 * uMotion;
-  transformed.y += cos(uTime * .0001 + aPhase * 1.37) * .0035 * uMotion;
+  float orbit = uTime * .00016 + aPhase;
+  transformed.x += (sin(uTime * .00012 + aPhase) * .0028 + cos(orbit) * .012 * uHover) * uMotion;
+  transformed.y += (cos(uTime * .0001 + aPhase * 1.37) * .0035 + sin(orbit * 1.17) * .015 * uHover) * uMotion;
   gl_Position = vec4(transformed, 1.0);
   gl_PointSize = max(0.65, aSize * uPointScale * uPixelRatio * (1.0 + transformed.z * .12));
   vBrightness = aBrightness;
@@ -39,13 +41,14 @@ function attributes(geometry, data) {
   return geometry;
 }
 
-function material({ color, opacity, pointScale, pixelRatio, reducedMotion }) {
+function material({ color, opacity, pointScale, pixelRatio, reducedMotion, hover = 0 }) {
   return new THREE.ShaderMaterial({
     vertexShader, fragmentShader, transparent: true, depthWrite: false,
     blending: THREE.AdditiveBlending,
     uniforms: {
       uTime: { value: 0 }, uMotion: { value: reducedMotion ? 0 : 1 },
       uPixelRatio: { value: pixelRatio }, uPointScale: { value: pointScale },
+      uHover: { value: hover },
       uColor: { value: new THREE.Color(color) }, uOpacity: { value: opacity },
     },
   });
@@ -53,8 +56,8 @@ function material({ color, opacity, pointScale, pixelRatio, reducedMotion }) {
 
 function combineLogos(core, masks, profile) {
   const centers = [-.82, -.38, .1, .62];
-  const centerY = profile.name === "reference" ? .55 : profile.name === "tablet" ? .34 : .24;
-  const widths = [.105, .105, .116, .105], heights = [.19, .19, .208, .19];
+  const centerY = profile.name === "reference" ? .2 : profile.name === "tablet" ? .34 : .24;
+  const widths = [.105, .105, .1, .09], heights = [.27, .27, .3, .27];
   const buffers = masks.map((mask, index) => core.sampleLogoMask(mask, profile, profile.seed + index * 997));
   const total = profile.logoCount * 4;
   const positions = new Float32Array(total * 3), sizes = new Float32Array(total);
@@ -78,7 +81,7 @@ function flowData(core, profile) {
   const flow = core.buildAtmosphere({ ...profile, atmosphereCount: profile.flowCount }, profile.seed ^ 0x91e10da5);
   const random = core.seededRandom(profile.seed ^ 0x4f1bbcdc);
   const centers = [-.82, -.38, .1, .62];
-  const centerY = profile.name === "reference" ? .55 : profile.name === "tablet" ? .34 : .24;
+  const centerY = profile.name === "reference" ? .2 : profile.name === "tablet" ? .34 : .24;
   for (let index = 0; index < profile.flowCount; index += 1) {
     const offset = index * 3, x = flow.positions[offset];
     if (random() < .74) {
@@ -112,7 +115,7 @@ export function createParticleRenderer({ canvas, masks, profile, core, reducedMo
   const flowGeometry = new THREE.BufferGeometry();
   const logoGeometry = new THREE.BufferGeometry();
   const atmosphereMaterial = material({ color: 0xd99d24, opacity: .9, pointScale: 1.22, pixelRatio: profile.pixelRatio, reducedMotion });
-  const flowMaterial = material({ color: 0xf0ae2a, opacity: .9, pointScale: 1.1, pixelRatio: profile.pixelRatio, reducedMotion });
+  const flowMaterial = material({ color: 0xf0ae2a, opacity: .9, pointScale: 1.1, pixelRatio: profile.pixelRatio, reducedMotion, hover: 1 });
   const logoGlowMaterial = material({ color: 0xf2aa2d, opacity: .28, pointScale: 2.8, pixelRatio: profile.pixelRatio, reducedMotion });
   const logoMaterial = material({ color: 0xffedaa, opacity: 1, pointScale: 1.08, pixelRatio: profile.pixelRatio, reducedMotion });
   const atmosphere = new THREE.Points(attributes(atmosphereGeometry, core.buildAtmosphere(profile, profile.seed)), atmosphereMaterial);
