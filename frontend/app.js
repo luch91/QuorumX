@@ -396,7 +396,8 @@
   function setupParticles() {
     const canvas = $("#dao-particles"); if (!canvas) return;
     const context = canvas.getContext("2d"), reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let cloud = [], logoParticles = [], logoMasks = [], frame = 0, width = 0, height = 0, assetsReady = false;
+    const stage = canvas.closest(".particle-stage");
+    let cloud = [], logoParticles = [], logoMasks = [], frame = 0, width = 0, height = 0, assetsReady = false, startedAt = null;
 
     function normalRandom() {
       return Math.sqrt(-2 * Math.log(Math.max(Math.random(), .0001))) * Math.cos(Math.PI * 2 * Math.random());
@@ -440,15 +441,20 @@
     }
 
     function draw(time = 0) {
+      if (time > 0 && startedAt === null) startedAt = time;
+      const elapsed = startedAt === null ? 0 : time - startedAt;
+      const loadingSwoosh = reduced ? 0 : Math.max(0, 1 - elapsed / 1800);
       context.clearRect(0, 0, width, height);
       context.globalCompositeOperation = "lighter";
       for (const particle of cloud) {
         const drift = reduced ? 0 : Math.sin(time * .00018 + particle.phase) * 5;
         context.globalAlpha = particle.opacity * (.72 + .28 * Math.sin(time * .0003 + particle.phase));
         context.fillStyle = "#c88e30";
-        context.beginPath(); context.arc(particle.x + drift, particle.y + drift * .35, particle.size, 0, Math.PI * 2); context.fill();
+        const sweepX = loadingSwoosh * width * (.2 + .14 * Math.sin(particle.phase));
+        const sweepY = loadingSwoosh * height * .12 * Math.cos(particle.phase * 1.4);
+        context.beginPath(); context.arc(particle.x + drift - sweepX, particle.y + drift * .35 + sweepY, particle.size, 0, Math.PI * 2); context.fill();
       }
-      for (const particle of logoParticles) {
+      for (const particle of stage?.classList.contains("webgl-failed") ? logoParticles : []) {
         if (!reduced) {
           particle.x += (particle.targetX - particle.x) * particle.speed;
           particle.y += (particle.targetY - particle.y) * particle.speed;
@@ -489,7 +495,7 @@
       { src: "assets/arbitrum.webp", mode: "arbitrum" }, { src: "assets/ens.webp", mode: "ens" },
     ];
     try {
-      const rendererModulePromise = import("./particle_renderer.js");
+      const rendererModulePromise = import("./particle_renderer.bundle.js");
       const [sampledMasks, rendererModule] = await Promise.all([
         Promise.all(marks.map(loadParticleMask)),
         rendererModulePromise,
@@ -503,11 +509,13 @@
         canvas, masks, profile, core,
         reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
         onReady: () => {
+          stage.classList.remove("webgl-loading");
           stage.classList.remove("webgl-failed");
           stage.classList.add("webgl-ready");
           performance.mark?.("quorumx-particles-ready");
         },
         onFailure: () => {
+          stage.classList.remove("webgl-loading");
           stage.classList.remove("webgl-ready");
           stage.classList.add("webgl-failed");
         },
@@ -518,6 +526,7 @@
       observer.observe(canvas);
       window.addEventListener("pagehide", () => { observer.disconnect(); renderer.dispose(); }, { once: true });
     } catch {
+      stage.classList.remove("webgl-loading");
       stage.classList.remove("webgl-ready");
       stage.classList.add("webgl-failed");
     }
