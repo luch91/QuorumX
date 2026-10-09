@@ -8,17 +8,15 @@ const {
   resolveParticleMasks,
   swooshOrigin,
 } = require("../particles.js");
-const { existsSync, readFileSync } = require("node:fs");
+const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 
 describe("GPU particle core", () => {
-  test("pins and stages Three.js from a local runtime module", () => {
+  test("pins Three.js as a build dependency", () => {
     const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8"));
 
     expect(packageJson.dependencies.three).toBe("0.186.1");
-    expect(packageJson.scripts["stage:three"]).toBe("node scripts/stage_three.cjs");
-    expect(existsSync(resolve(process.cwd(), "frontend/vendor/three.module.js"))).toBe(true);
-    expect(existsSync(resolve(process.cwd(), "frontend/vendor/three.core.js"))).toBe(true);
+    expect(packageJson.scripts["stage:three"]).toBeUndefined();
   });
 
   test("generates stable seeded sequences with meaningful divergence", () => {

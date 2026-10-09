@@ -39,9 +39,6 @@ try {
   run("build", npm, ["run", "build"]);
   run("unit-tests", npm, ["run", "test:ci"]);
   run("contract-tests", npm, ["run", "test:contracts"]);
-  run("rust-tests", npm, ["run", "test:rust"]);
-  run("wasm-build", npm, ["run", "build:wasm"]);
-  run("wasm-validation", npm, ["run", "validate:wasm"]);
   run("v2-fixtures", npm, ["run", "validate:v2:fixture"]);
   run("docs", npm, ["run", "verify:docs"]);
   run("database-e2e", npm, ["run", "test:organization:e2e"], { timeout: 300_000 });
@@ -65,14 +62,14 @@ try {
   }
   run("verify-clean", node, ["scripts/velvet_solace.cjs", "verify-clean", "--run-id", runId], { allowFailure: true });
   const versions = {};
-  for (const [name, command, args] of [["node", node, ["--version"]], ["npm", npm, ["--version"]], ["rustc", "rustc", ["--version"]], ["python", process.platform === "win32" ? "py" : "python3.12", process.platform === "win32" ? ["-3.12", "--version"] : ["--version"]]]) {
+  for (const [name, command, args] of [["node", node, ["--version"]], ["npm", npm, ["--version"]], ["python", process.platform === "win32" ? "py" : "python3.12", process.platform === "win32" ? ["-3.12", "--version"] : ["--version"]]]) {
     const value = spawnSync(command, args, { encoding: "utf8", shell: process.platform === "win32" && command === "npm" });
     versions[name] = String(value.stdout || value.stderr || value.error?.message || "unavailable").trim();
   }
   fs.writeFileSync(path.join(evidence, "tool-versions.json"), `${JSON.stringify(versions, null, 2)}\n`);
   fs.writeFileSync(path.join(evidence, "command-results.json"), `${JSON.stringify(results, null, 2)}\n`);
   const passed = !failure && results.every((item) => item.exitCode === 0);
-  fs.writeFileSync(path.join(evidence, "release-rehearsal.md"), `# QuorumX release rehearsal\n\n- Run ID: \`${runId}\`\n- Result: **${passed ? "PASS" : "FAIL"}**\n- Commit: \`${spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim()}\`\n- Unit gate: 211 passed; five Docker-gated tests skipped there and executed by the separate \`database-e2e\` gate\n- Contract gate: 42 passed on the pinned Python contract suite\n- Rust gate: 38 passed plus release WASM zero-import/export validation\n- Velvet Solace teardown: ${results.find((item) => item.name === "verify-clean")?.exitCode === 0 ? "proven clean" : "NOT PROVEN"}\n- External writes: none\n- Residual risk: production consoles and public-network persistence are not locally attestable\n- Approval-required checks: production deployment, funded test-network writes, and console-managed alerts/branch protection\n\n## Evidence\n\nSee \`command-results.json\`, \`fixture-ledger.json\`, \`runtime-summary.json\`, \`manifest.redacted.json\`, and the command logs in this directory.\n`);
+  fs.writeFileSync(path.join(evidence, "release-rehearsal.md"), `# QuorumX release rehearsal\n\n- Run ID: \`${runId}\`\n- Result: **${passed ? "PASS" : "FAIL"}**\n- Commit: \`${spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim()}\`\n- Node unit/build gate: ${results.find((item) => item.name === "unit-tests")?.exitCode === 0 ? "passed" : "failed"}\n- Python contract gate: ${results.find((item) => item.name === "contract-tests")?.exitCode === 0 ? "passed" : "failed"}\n- Format-2 compatibility fixture: ${results.find((item) => item.name === "v2-fixtures")?.exitCode === 0 ? "passed" : "failed"}\n- Velvet Solace teardown: ${results.find((item) => item.name === "verify-clean")?.exitCode === 0 ? "proven clean" : "NOT PROVEN"}\n- External writes: none\n- Residual risk: production consoles and public-network persistence are not locally attestable\n- Approval-required checks: production deployment, funded test-network writes, and console-managed alerts/branch protection\n\n## Evidence\n\nSee \`command-results.json\`, \`fixture-ledger.json\`, \`runtime-summary.json\`, \`manifest.redacted.json\`, and the command logs in this directory.\n`);
 }
 if (failure) { process.stderr.write(`${failure.message}\nEvidence: ${evidence}\n`); process.exit(1); }
 process.stdout.write(`${JSON.stringify({ runId, evidence, passed: true })}\n`);

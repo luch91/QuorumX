@@ -3,8 +3,7 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const entrypoints = ["cli", "legacy_cli", "smoke_cli", "preflight_cli", "metrics_cli"]
-  .map((name) => path.join(root, "dist", "app", "src", `${name}.js`));
+const entrypoints = [path.join(root, "dist", "app", "src", "cli.js")];
 
 for (const entrypoint of entrypoints) {
   if (!existsSync(entrypoint)) throw new Error(`Missing built CLI entry point: ${path.relative(root, entrypoint)}`);

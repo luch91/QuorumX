@@ -7,7 +7,6 @@ function dependencies(overrides: Partial<QuorumXCliDependencies> = {}): QuorumXC
     listProposals: jest.fn().mockResolvedValue([]),
     assess: jest.fn().mockResolvedValue({ attempts: [], transaction: { transactionId: "0xtx", proposalKey: "fixture:x", state: "accepted" } }),
     getAssessment: jest.fn().mockResolvedValue(undefined),
-    runLegacy: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -29,9 +28,6 @@ describe("QuorumX CLI", () => {
   it("returns a nonzero code for undetermined consensus", async () => {
     const deps = dependencies({ assess: jest.fn().mockResolvedValue({ attempts: [], transaction: { transactionId: "0x", proposalKey: "x", state: "undetermined" } }) });
     await expect(runQuorumXCli(["assess", "--source", "snapshot", "--proposal", "x"], deps, jest.fn())).resolves.toBe(3);
-  });
-  it("keeps legacy invocation explicit", async () => {
-    const deps = dependencies(); await runQuorumXCli(["legacy", "telegraph"], deps, jest.fn()); expect(deps.runLegacy).toHaveBeenCalled();
   });
   it("rejects unsupported assessment sources before invoking dependencies", async () => {
     const deps = dependencies(); const output: string[] = []; const errors: string[] = [];

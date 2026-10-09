@@ -14,10 +14,11 @@ describe("Three.js particle renderer integration", () => {
     expect(bundle).not.toMatch(/from\s+["']\.\/vendor\/three/);
   });
 
-  test("imports only the staged local Three.js module and defines three GPU layers", () => {
+  test("bundles the pinned Three.js package and defines three GPU layers", () => {
     const renderer = source("frontend/particle_renderer.js");
 
-    expect(renderer).toContain('from "./vendor/three.module.js"');
+    expect(renderer).toContain('from "three"');
+    expect(renderer).not.toContain("./vendor/");
     expect(renderer).not.toMatch(/https?:\/\//);
     expect(renderer).toMatch(/atmosphere/);
     expect(renderer).toMatch(/flow/);
