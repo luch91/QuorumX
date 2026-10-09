@@ -57,8 +57,17 @@ def test_v33_deploy_write_and_read_require_successful_execution(default_account)
         )
     except Exception:
         if sent_hashes:
-            print("failed outer receipt:", json.dumps(original_request(
-                method="eth_getTransactionReceipt", params=[sent_hashes[-1]]), default=str))
+            outer_receipt = original_request(
+                method="eth_getTransactionReceipt", params=[sent_hashes[-1]])
+            print("failed outer receipt:", json.dumps(outer_receipt, default=str))
+            logs = outer_receipt.get("result", {}).get("logs", [])
+            if logs and len(logs[0].get("topics", [])) > 1:
+                genlayer_hash = logs[0]["topics"][1]
+                try:
+                    print("failed GenLayer transaction:", json.dumps(
+                        client.get_transaction(transaction_hash=genlayer_hash), default=str))
+                except Exception as transaction_error:
+                    print("GenLayer transaction unavailable:", repr(transaction_error))
             try:
                 print("failed outer trace:", json.dumps(original_request(
                     method="debug_traceTransaction", params=[sent_hashes[-1], {}]), default=str))
