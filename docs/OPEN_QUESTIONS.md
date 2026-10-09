@@ -1,14 +1,14 @@
 # Open questions
 
-Only unresolved external decisions belong here. Product behavior described by
-the repository must not depend on an unanswered item.
+The following limitations are deliberately unresolved and must not be
+overstated in product copy:
 
-## Miner attribution mechanics
-
-Answer: Open. GenLayer/validator attribution details must be confirmed against
-the target network before presenting validator-level attribution publicly.
-
-## Persistent test-network registration
-
-Answer: Open. A persistent production-like registration requires separate
-authorization, funding limits, and an accountable operator.
+- Fixed RPC and explorer providers supply secondary evidence, not
+  cryptographic Ethereum state or inclusion proofs.
+- Arbitrary public URLs, private financial statements, and signed document
+  attestations are not format 3 evidence adapters.
+- Semantic revision comparison is bounded and heuristic; it is not a general
+  semantic diff engine.
+- Claim history does not yet provide stable cross-revision claim identities.
+- Studionet is a deployment and validation environment, not production-grade
+  settlement infrastructure.

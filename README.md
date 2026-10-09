@@ -19,43 +19,37 @@ replace governance judgment. It shows what was assessed, where it came from,
 what consequences and evidence gaps were identified, and what GenLayer
 validators accepted.
 
-## Due diligence v2
+## Current architecture: QuorumX Due Diligence
 
-The original `GovernanceRiskOracle` and its accepted Studionet assessments are
-version 1 records. Their 0–100 scores are historical model outputs, not
-probabilities, confidence levels, or defined weighted totals. They remain
-inspectable and are labelled **Legacy risk assessment** in the Living Index.
+QuorumX has three durable public record formats:
 
-Version 2 introduces a separate `GovernanceDueDiligence` contract. It represents
-proposal actions, material claims, evidence references, findings, execution
-steps, unresolved questions, and a finding-derived review priority. It does not
-recommend a vote. Validators still retrieve the Snapshot proposal independently
-and agree on normalized source material. The leader extracts bounded material
-facts from exact source passages; validators independently retrieve the source,
-re-normalize those facts, and require an exact canonical match before the
-deterministic report is accepted. The record can be inspected alongside its
-proposal content hash and transaction.
+1. **Format 1** — the historical score model. These records remain readable and
+   are clearly labelled as legacy; their scores are not probabilities.
+2. **Format 2** — proposal-grounded due diligence with structured actions,
+   claims, findings, safeguards, execution steps, and unresolved questions.
+3. **Format 3** — evidence-backed due diligence with bounded external adapters,
+   per-claim evidence authority, safeguard states, dependency mapping, and
+   independently derived structured fields.
 
-The first v2 evidence scope is the validator-retrieved proposal. A proposal's
-own assertion of an external metric does **not** establish independent
-verification; those claims remain unverified until controlled external evidence
-adapters and validator checks exist. Review priority means the proposal merits
-human attention, never that QuorumX has decided a governance vote.
+Format 3 is the current implementation. Validators retrieve the Snapshot
+proposal and fixed, bounded evidence sources. Safe state is corroborated by two
+fixed Ethereum JSON-RPC providers at one finalized block; proposal-identified
+transfer records are retrieved from fixed Blockscout endpoints; and bounded
+same-space Snapshot history supports explicit governance-history comparisons.
+Every evidence record is hashed and attached only to the claims it supports.
+Arbitrary proposal-linked URLs are not fetched. Provider reports are secondary
+evidence, not cryptographic Ethereum inclusion or state proofs.
 
-The v2 contract passed deterministic tests, GenVM static lint, and live
-Studionet write/read checks. Version 1 remains readable as immutable legacy
-provenance; no legacy score is silently reinterpreted as a v2 finding.
+The current immutable Studionet contract is
+[`0xf183c38364Bc92726E54d3639a6c4f8d107630c7`](https://explorer-studio.genlayer.com/address/0xf183c38364Bc92726E54d3639a6c4f8d107630c7).
+The public Worker indexes `balancer.eth`, `safe.eth`,
+`arbitrumfoundation.eth`, and `ens.eth`. Accepted records remain bound to their
+exact proposal revision and transaction; older format 1, format 2, and format 3
+records are never rewritten.
 
-| Layer | v2 path |
-| --- | --- |
-| Contract | `contracts/governance_due_diligence.py` |
-| Database | `database/migrations/0006_due_diligence_v2.sql` adds revision-bound v2 records |
-| API | Existing v1 routes retain their fields; `GET /v2/proposals/<canonical-id>/due-diligence` exposes v2 |
-| Living Index | Findings and evidence take precedence when a v2 record exists; v1 is labelled legacy |
-
-The verified v2 Studionet contract is
-`0x55d4b311f5b8ec5948cf0F34Feb05fce79b71760`. No legacy result is converted
-into a v2 finding.
+Internal schema revisions used to decode already-stored format 3 records are
+documented in [format history](docs/FORMAT_HISTORY.md). They are compatibility
+metadata, not public product versions.
 
 > **Live now:** [open the Living Index](https://quorumx.dev/) · [inspect the contract](https://explorer-studio.genlayer.com/address/0x59A6A393e15B43b6a13ac6B31A3fbb19094Bf237) · [inspect the first assessment](https://explorer-studio.genlayer.com/tx/0x55131db5c1b05ac6be9b46ef86511a95f5a880b957c78270337c3b3628149268)
 
@@ -69,7 +63,7 @@ QuorumX can serve as:
 
 - an early-warning layer for delegates and security councils;
 - a review queue for treasury and operations teams;
-- a machine-readable risk signal for governance dashboards;
+- machine-readable evidence and review-priority data for governance dashboards;
 - an auditable input to policies that still require human approval;
 - a reusable pattern for source-grounded GenLayer applications.
 
@@ -79,15 +73,18 @@ QuorumX can serve as:
 | --- | --- | --- |
 | Source authority | Operator prompt or backend | Validators independently fetch the public source |
 | Agreement | One provider response | GenLayer consensus |
-| Output | Free-form prose | Bounded score, level, categories, recommendation, summary, hashes |
+| Output | Free-form prose | Versioned findings, claims, evidence references, unresolved questions, review priority, hashes |
 | Provenance | Usually implicit | Canonical key, source kind, locator hash, content hash |
 | Duplicate handling | Application convention | Content-derived idempotency plus contract state |
 | Failure behavior | Often best effort | Missing readable state remains unavailable or undetermined |
 | Audit trail | Backend logs | Public transaction, readable state, redacted local evidence |
 
-## Verified live proof
+## Historical v1 live proof
 
-QuorumX has been deployed and exercised against a real Snapshot proposal on GenLayer Studionet.
+The first public test demonstrates the historical v1 scoring path only. It is
+not QuorumX's current assessment model; its risk level, 0–100 score, and
+recommendation are retained as legacy provenance, not interpreted as current
+due-diligence findings.
 
 | Item | Verified value |
 | --- | --- |
@@ -112,7 +109,7 @@ snapshot:balancer.eth:0x25ee897681ae8bbae5ae224b14ad6a03ea6920f768d52b2e9aa1a85b
 
 The stored assessment identifies execution, governance, liquidity, smart-contract, and treasury risk. Its summary highlights the proposed BAL transfer, governance conflicts, council-threshold changes, IP assignment, migration dependencies, and speculative return assumptions. This demonstrates a functioning consensus path; it is not financial advice or a claim that Studionet is production infrastructure.
 
-## Architecture
+## Deployed architecture
 
 ```text
 Public proposal source
@@ -120,11 +117,14 @@ Public proposal source
         ▼
 QuorumX operator client
 discover · dedupe · submit · wait · recover · present
-        │ assess(source, idempotency key)
+        │ assess(source, immutable run ID)
         ▼
-GovernanceRiskOracle on GenLayer
-parse → independent retrieval → strict source equality
-      → grounded assessment → bounded storage
+QuorumX Due Diligence format 3 on GenLayer
+validators independently retrieve proposal → strict source equality
+      → independently derive/validate structured facts
+      → fixed Safe RPC, Blockscout, and governance-history adapters
+      → evidence-linked claims, safeguards, and consequences
+      → bounded immutable storage
         │ readable consensus state
         ▼
 CLI · Living Index · governance integrations
@@ -134,8 +134,8 @@ CLI · Living Index · governance integrations
 | --- | --- | --- |
 | Source adapters | Discover and normalize references | Declaring the authoritative risk result |
 | TypeScript operator | Deadline checks, deduplication, submission, recovery, presentation | Supplying authoritative proposal text |
-| `GovernanceRiskOracle` | Retrieval, canonicalization, consensus validation, bounded storage | Voting or executing governance actions |
-| GenLayer validators | Independently observe and validate nondeterministic work | Trusting local operator evidence |
+| QuorumX Due Diligence contract | Retrieval, canonicalization, source-grounded fact validation, bounded immutable storage | Voting or executing governance actions |
+| GenLayer validators | Independently retrieve proposals and derive/validate bounded facts and fixed-adapter evidence | Trusting local operator evidence |
 | Living Index | Present the public proposal index, review priorities, and verified evidence | Requiring a wallet for public reads or holding keys |
 
 ### v0.3 multi-DAO governance indexer
@@ -152,7 +152,7 @@ Cloudflare Worker · api.quorumx.dev
 Neon Postgres · proposals · immutable revisions · durable jobs · transactions
         │ assessment submission and finality tracking
         ▼
-GovernanceRiskOracle on GenLayer
+QuorumX Due Diligence format 3 on GenLayer
 ```
 
 `GET /health/live` is a shallow process check. `GET /health/ready` (and the compatibility alias `GET /health`) exercises the Worker, Hyperdrive, and database and reports source freshness, queue age, dead-letter/quarantine count, plus version/config/schema attestations. Atomic `FOR UPDATE SKIP LOCKED` claiming and stale-lock recovery prevent concurrent cron invocations from processing the same job. Contract state is accepted only when its proposal key and validator-agreed content hash match the indexed revision. The runtime database role is SQL-managed and intentionally lacks `DELETE`, schema ownership, DDL, and Neon's broad `neon_superuser` membership.
@@ -168,6 +168,8 @@ GovernanceRiskOracle on GenLayer
 | `GET /v1/proposals?status=active&ecosystem=ethereum` | Cursor-paginated proposal feed with latest assessment state |
 | `GET /v1/proposals/<canonical-id>` | Proposal body, revision, transaction, and accepted assessment details |
 | `GET /v1/assessments/<proposal-key>` | Accepted assessment and GenLayer provenance |
+| `GET /v2/proposals/<canonical-id>/due-diligence` | Deployed v2 proposal-grounded due-diligence record |
+| `GET /v3/proposals/<canonical-id>/due-diligence` | Current evidence-backed due-diligence record |
 
 Proposal lists accept `status`, `space`, exact `source`, human-facing `dao`, proposer `author`, `assessment`, and `ecosystem` filters. Use `assessment=unassessed` for indexed proposals without a job. `q` searches the complete filtered dataset by title, canonical/source identifier, DAO/space, exact author, or exact transaction hash. `sort=priority` globally orders accepted v2 review priorities (`urgent`, `high`, `normal`, `low`, unassessed), then newest database ID as the deterministic tie-breaker. Lists accept `limit` (maximum 100) and an opaque, filter-bound `page.nextCursor`; malformed or reused cursors fail with `invalid_cursor`. Rows inserted after page one have larger IDs and are excluded from the remainder of that traversal, giving stable snapshot-like pagination without duplicates. `page.scope=all_matching_proposals` means an empty result is authoritative for the supplied filters. Anonymous successful reads use a 15-second public cache with 30-second stale revalidation; errors, health, and `/internal/*` are `no-store`. Every API response includes `x-correlation-id`. Reads require no wallet or API key. The internal cycle endpoint is bearer-protected; normal ingestion is cron-driven.
 
@@ -175,16 +177,19 @@ Proposal lists accept `status`, `space`, exact `source`, human-facing `dao`, pro
 
 The Living Index is QuorumX's evidence-first governance interface. It consumes the public API directly and provides:
 
-- **Needs Review Now:** a deadline-aware queue ranked by accepted risk signal;
+- **Needs Review Now:** a deadline-aware queue ranked by accepted review priority;
 - **Proposal Index:** searchable, filterable coverage across every configured DAO;
 - **Public Record:** proposal material beside its source, proposer, revision, GenLayer transaction, network, and consensus state;
-- **Risk Assessments:** a compact view of accepted GenLayer results;
+- **Risk Assessments:** a compact view of accepted due-diligence findings and evidence, not a vote or opaque score;
 - **DAO Directory:** transparent indexing and assessment-policy status for each source; and
 - **Methodology:** the retrieval, normalization, consensus, and publication lifecycle in plain language.
 
 All browsing remains public and wallet-free. Cloudflare serves the interface shell at [quorumx.dev](https://quorumx.dev/), while the browser retrieves the current proposal, source, and assessment state from [api.quorumx.dev](https://api.quorumx.dev). The optional navbar wallet control only requests an account from an already-installed injected wallet and displays the selected address locally. It does not request a signature, switch networks, submit transactions, or unlock additional reading access. Signed participation is reserved for a later feature with a specific, visible purpose.
 
-## Consensus lifecycle
+## Legacy v1 scoring lifecycle (historical)
+
+The following lifecycle and field table describe `GovernanceRiskOracle` v1
+only. They are not the current due-diligence assessment model.
 
 1. **Discover:** find an eligible proposal in configured Snapshot spaces.
 2. **Check:** reject expired review windows and read existing contract state.
@@ -197,7 +202,7 @@ All browsing remains public and wallet-free. Cloudflare serves the interface she
 9. **Store:** persist decision fields, source kind, locator hash, content hash, and timestamp.
 10. **Verify:** report `accepted` only when matching state is readable. Transaction status alone is insufficient.
 
-## Assessment model
+## Legacy v1 assessment fields
 
 | Field | Constraint |
 | --- | --- |
@@ -367,7 +372,7 @@ Evidence is written after submission and at the terminal state. Recovery starts 
 | Operator manipulation | Operator supplies a reference, not authoritative content |
 | Source drift | Validator-agreed material is hashed and stored |
 | Duplicate submission | Pre-read, content idempotency, contract key-reuse rejection |
-| SSRF/private access | Public HTTPS validation and private-address rejection |
+| SSRF/private access | V1 public-URL intake applies URL/IP checks; v2/v3 contracts construct fixed source URLs and do not fetch proposal-linked URLs |
 | Fixture confusion | Explicit enablement and permanent fixture provenance |
 | False acceptance | Requires readable matching contract state |
 | Unexpected payment | GenLayer failure never triggers legacy Telegraph payment |
@@ -377,9 +382,17 @@ Consensus does not make a conclusion objectively correct. It makes retrieval and
 
 ## Verification status
 
-Protected `main` requires the full Jest suite, TypeScript type-check and builds, Python contract tests, GenVM static checks, npm audit, and full-history Gitleaks scanning. The separate daily/on-demand **Studionet smoke** has no key and performs no write; it must discover live proposals and read the canonical stored assessment. Worker-specific tests cover Snapshot normalization, bounded GraphQL handling, and byte-identical contract hashing.
+Protected `main` requires the full Jest suite, TypeScript type-check and builds,
+Python contract tests, GenVM static and SDK-backed semantic checks, dependency
+audit, and full-history secret scanning. The separate daily/on-demand
+**Studionet smoke** has no key and performs no write; it enumerates Balancer,
+SafeDAO, Arbitrum DAO, and ENS DAO and reads canonical stored state. The format
+3 live record proves bounded provider retrieval and the reported values, not
+completeness of recovery data, an exploit-loss figure, or a cryptographic chain
+proof. Historical format 1 and format 2 records remain readable without
+reinterpretation.
 
-`genvm-lint lint` passes. SDK-backed `genvm-lint check` currently returns `E101` because `genvm-linter 0.11.0` requests an absent `genvm-universal.tar.xz` release asset. CI tolerates only that exact error. See [genlayerlabs/genvm-linter#27](https://github.com/genlayerlabs/genvm-linter/issues/27).
+The contract workflow pins `GENVM_VERSION=v0.2.16` and caches the official GenVM bundle so SDK-backed checks use a reproducible runner artifact. All three contracts pass `genvm-lint check` against that bundle.
 
 ## Repository map
 

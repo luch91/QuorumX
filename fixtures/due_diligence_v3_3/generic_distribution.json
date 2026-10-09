@@ -1,0 +1,8 @@
+{
+  "id": "generic-distribution-1",
+  "space": "safe.eth",
+  "title": "Community event reimbursements",
+  "body": "Distribution of 10 ETH to community event organizers shall be:\n\nThe operations team will publish the recipient list after approval.",
+  "choices": ["For", "Against"],
+  "state": "active"
+}

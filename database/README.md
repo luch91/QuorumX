@@ -13,7 +13,7 @@ npm run db:provision-role
 npm run db:migrate
 ```
 
-The runtime password belongs in Cloudflare Hyperdrive, not in source control or a Worker variable. `quorumx_runtime` receives schema usage, table `SELECT`/`INSERT`/`UPDATE`, and sequence usage. It receives no `DELETE`, DDL, ownership, or `neon_superuser` membership.
+The runtime password belongs in Cloudflare Hyperdrive, not in source control or a Worker variable. `quorumx_runtime` receives schema usage and only the table operations required by the runtime. Accepted assessment tables are append/read only. The role receives no `DELETE`, DDL, ownership, or `neon_superuser` membership.
 
 Migrations are applied alphabetically and recorded with SHA-256 checksums in `public.quorumx_schema_migrations`. Editing an applied migration causes the runner to stop.
 
@@ -29,5 +29,8 @@ Successful output after migration `0010_runtime_privilege_matrix.sql` reports 12
 tables, `schema_usage: true`, `proposal_rw: true`,
 `due_diligence_rw: true`, both delete privileges `false`, no accepted-record
 mutation privilege, no schema creation, and no unsafe role membership. Migration
-0006 keeps v1 assessments intact; migrations 0007-0010 add immutable observation,
-acceptance, recovery, audit, and runtime-privilege invariants.
+0006 keeps format 1 assessments intact; migrations 0007-0010 add immutable
+observation, acceptance, recovery, audit, and runtime-privilege invariants.
+Migration 0011 adds format 3 storage without weakening those invariants, and
+0012 adds the current internal format 3 schema/run metadata. Earlier migration
+numbers are never renamed or overwritten.

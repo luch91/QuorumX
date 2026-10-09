@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { claimStatusCounts, parseDueDiligence } from "../src/due_diligence";
 import { revisionChanges } from "../src/revision_changes";
 import { claimAssessmentJob } from "../src/database";
@@ -37,8 +39,9 @@ describe("due diligence v2 boundary", () => {
     const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     await claimAssessmentJob(client as never, "worker-a", "1");
     expect(client.query).toHaveBeenCalledWith(expect.stringContaining("candidate.assessment_version = $2"),
-      ["worker-a", "1"]);
-    const sql = jest.mocked(client.query).mock.calls[0][0] as string;
+      ["worker-a", "1", "1"]);
+    const sql = jest.mocked(client.query).mock.calls
+      .map(([query]) => String(query)).find((query) => query.includes("eligible_candidate"))!;
     expect(sql).toContain("lease_expires_at");
     expect(sql).toContain("next_poll_at");
     expect(sql).toContain("attempt_count asc");
@@ -86,8 +89,53 @@ describe("due diligence v2 boundary", () => {
       { title: "Program", bodyText: "Send 5M ARB to 0x2222222222222222222222222222222222222222 with 2/3 Safe.", choices: ["Yes", "No"] },
     );
     expect(changes.map((change) => change.field)).toEqual(expect.arrayContaining([
-      "Token amounts mentioned", "Addresses mentioned", "Signature thresholds mentioned", "Clawback language",
+      "Token amounts mentioned", "Funding amount", "Addresses mentioned", "Recipient address",
+      "Signature thresholds mentioned", "Safe/multisig threshold", "Clawback language",
     ]));
     expect(changes.every((change) => change.significance === "material")).toBe(true);
+  });
+
+  it("compares material claims and distinguishes addresses by evidenced role", () => {
+    const changes = revisionChanges(
+      { title: "Incentive program", bodyText: "The protocol has 120,000 monthly active users.\nTransfer 3M ARB to 0x1111111111111111111111111111111111111111.\nSafe owners: 0x3333333333333333333333333333333333333333.", choices: ["Yes", "No"] },
+      { title: "Incentive program", bodyText: "The protocol has 200,000 monthly active users.\nTransfer 5M ARB to 0x2222222222222222222222222222222222222222.\nSafe owners: 0x4444444444444444444444444444444444444444.", choices: ["Yes", "No"] },
+    );
+    expect(changes.map((change) => change.field)).toEqual(expect.arrayContaining([
+      "Material claim text", "Funding amount", "Recipient address", "Signer addresses",
+    ]));
+    expect(changes.find((change) => change.field === "Material claim text")?.explanation)
+      .toContain("does not independently verify either claim");
+  });
+
+  it("detects permission-holder and audit/reference changes only in explicit context", () => {
+    const changes = revisionChanges(
+      { bodyText: "Grant upgrade permission to Council Alpha.\nAudit report: https://audit.example/v1.pdf" },
+      { bodyText: "Grant upgrade permission to Council Beta.\nAudit report: https://audit.example/v2.pdf" },
+    );
+    expect(changes.map((change) => change.field)).toEqual(expect.arrayContaining([
+      "Permission holder", "Audit/reference",
+    ]));
+  });
+
+  it("does not label an unrelated metric amount as a funding change", () => {
+    const changes = revisionChanges(
+      { bodyText: "Transfer 10 ETH to the grants Safe.\nLast year revenue was 20 ETH." },
+      { bodyText: "Transfer 10 ETH to the grants Safe.\nLast year revenue was 30 ETH." },
+    );
+    expect(changes.find((change) => change.field === "Funding amount")).toBeUndefined();
+    expect(changes.find((change) => change.field === "Material claim text")).toBeDefined();
+  });
+
+  it("uses the material revision fixture to identify changes without asserting absent safeguards", () => {
+    const fixturePath = (name: string) => resolve(process.cwd(), "fixtures/due_diligence_v3", name);
+    const before = JSON.parse(readFileSync(fixturePath("semantic_revision_previous.json"), "utf8"));
+    const after = JSON.parse(readFileSync(fixturePath("semantic_revision_current.json"), "utf8"));
+    const changes = revisionChanges({ title: before.title, bodyText: before.body }, { title: after.title, bodyText: after.body });
+    expect(changes.map((change) => change.field)).toEqual(expect.arrayContaining([
+      "Funding amount", "Recipient address", "Safe/multisig threshold", "Clawback language",
+    ]));
+    const clawback = changes.find((change) => change.field === "Clawback language");
+    expect(clawback?.explanation).toContain("before inferring a safeguard change");
+    expect(clawback?.currentValue).toBe("Not mentioned");
   });
 });

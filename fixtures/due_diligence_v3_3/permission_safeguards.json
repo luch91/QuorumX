@@ -1,0 +1,8 @@
+{
+  "id": "permission-safeguards-1",
+  "space": "safe.eth",
+  "title": "Emergency permission",
+  "body": "Grant the emergency council upgrade permission after a 48 hour timelock. The permission can be revoked by governance.",
+  "choices": ["For", "Against"],
+  "state": "active"
+}

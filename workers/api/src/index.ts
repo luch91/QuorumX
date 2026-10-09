@@ -1,8 +1,8 @@
 import type { Client } from "pg";
-import { getAssessment, getDueDiligence, getProposal, listProposals, listSources } from "./api";
+import { getAssessment, getDueDiligence, getDueDiligenceV3, getProposal, listProposals, listSources } from "./api";
 import { runIndexerCycle } from "./cycle";
-import { withDatabase } from "./database";
-import { snapshotSourceForSpace } from "./sources";
+import { createReassessmentJob, withDatabase } from "./database";
+import { snapshotSourceForSpace, validateMultiDaoCoverage } from "./sources";
 import { cycleOutcome } from "./operational";
 
 const CONTRACT_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -33,11 +33,14 @@ function pathValue(value: string): string {
 function cycleSettings(env: Env) {
   const configuredVersion: string = env.QUORUMX_ASSESSMENT_VERSION;
   if (!CONTRACT_ADDRESS.test(env.QUORUMX_CONTRACT_ADDRESS)) throw new Error("Contract address is invalid");
-  if (configuredVersion !== "1" && configuredVersion !== "2") {
+  if (configuredVersion !== "1" && configuredVersion !== "2" && configuredVersion !== "3") {
     throw new Error("Assessment version is invalid");
   }
   if (configuredVersion === "2" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)) {
     throw new Error("V2 contract address is invalid");
+  }
+  if (configuredVersion === "3" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)) {
+    throw new Error("V3 contract address is invalid");
   }
   if (!PRIVATE_KEY.test(env.QUORUMX_GENLAYER_PRIVATE_KEY)) throw new Error("GenLayer signing key is invalid");
   const snapshotLimit = Number(env.QUORUMX_SNAPSHOT_LIMIT);
@@ -49,17 +52,28 @@ function cycleSettings(env: Env) {
   )];
   if (snapshotSpaces.length === 0) throw new Error("At least one Snapshot space is required");
   snapshotSpaces.forEach(snapshotSourceForSpace);
+  validateMultiDaoCoverage(snapshotSpaces);
   return {
     databaseUrl: env.HYPERDRIVE.connectionString,
     snapshotSpaces,
     snapshotLimit,
     enableWrites: env.QUORUMX_ENABLE_WRITES === "true",
-    assessmentVersion: configuredVersion as "1" | "2",
+    assessmentVersion: configuredVersion as "1" | "2" | "3",
+    assessmentSchemaVersion: configuredVersion === "3" ? "3.3" : configuredVersion,
     genlayer: {
       contractAddress: env.QUORUMX_CONTRACT_ADDRESS as `0x${string}`,
       ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)
         ? { dueDiligenceContractAddress: env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS as `0x${string}` }
         : {}),
+      ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)
+        ? { dueDiligenceV3ContractAddress: env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS as `0x${string}` }
+        : {}),
+      dueDiligenceContracts: {
+        ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)
+          ? { "2": env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS as `0x${string}` } : {}),
+        ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)
+          ? { "3.3": env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS as `0x${string}` } : {}),
+      },
       privateKey: env.QUORUMX_GENLAYER_PRIVATE_KEY as `0x${string}`,
       ...(env.QUORUMX_GENLAYER_RPC_URL ? { rpcUrl: env.QUORUMX_GENLAYER_RPC_URL } : {}),
     },
@@ -82,6 +96,7 @@ async function readiness(env: Env, correlationId: string): Promise<Response> {
         database_name: string; checked_at: string; sources: number; proposals: number;
         pending_jobs: number; submitted_jobs: number; dead_letter_jobs: number; oldest_queue_at: string | null;
         last_success: string | null; migration: string | null; stale_sources: number; old_transactions: number;
+        covered_sources: number; scanning_sources: number; oldest_backlog: string | null;
       }>(`
         select
           current_database() as database_name,
@@ -96,8 +111,17 @@ async function readiness(env: Env, correlationId: string): Promise<Response> {
           (select count(*)::integer from quorumx.sources where enabled and
             (last_succeeded_at is null or last_succeeded_at < now() - make_interval(secs => greatest(poll_interval_seconds * 3, 900)))) as stale_sources,
           (select count(*)::integer from quorumx.transactions where state = 'submitted' and submitted_at < now() - interval '1 hour') as old_transactions,
+          (select count(*)::integer from quorumx.sources sources
+            join quorumx.poll_cursors cursors on cursors.source_id = sources.id
+            where sources.enabled and cursors.cursor ->> 'coverage' = 'covered') as covered_sources,
+          (select count(*)::integer from quorumx.sources sources
+            left join quorumx.poll_cursors cursors on cursors.source_id = sources.id
+            where sources.enabled and coalesce(cursors.cursor ->> 'coverage', 'scanning') = 'scanning') as scanning_sources,
+          (select min(created_at)::text from quorumx.assessment_jobs
+            where status in ('pending', 'retryable', 'processing')) as oldest_backlog,
           case when to_regclass('quorumx.submission_intents') is not null
-            then '0010_runtime_privilege_matrix.sql' else null end as migration
+            and to_regclass('quorumx.due_diligence_assessments_v3') is not null
+            then '0012_due_diligence_v3_schema.sql' else null end as migration
       `);
       return result.rows[0];
     });
@@ -117,11 +141,14 @@ async function readiness(env: Env, correlationId: string): Promise<Response> {
         oldPendingTransactions: state.old_transactions,
         oldestQueuedAt: state.oldest_queue_at,
         lastSuccessfulPollAt: state.last_success,
+        coverage: { coveredSources: state.covered_sources, scanningSources: state.scanning_sources },
+        oldestBacklogAt: state.oldest_backlog,
       },
       attestation: { serviceVersion: SERVICE_VERSION, releaseCommit: env.QUORUMX_RELEASE_COMMIT,
         assessmentVersion: env.QUORUMX_ASSESSMENT_VERSION, writesEnabled: env.QUORUMX_ENABLE_WRITES === "true",
-        schemaMigration: state.migration, contractAddress: env.QUORUMX_ASSESSMENT_VERSION === "2"
-          ? env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS : env.QUORUMX_CONTRACT_ADDRESS },
+        schemaMigration: state.migration, contractAddress: env.QUORUMX_ASSESSMENT_VERSION === "3"
+          ? env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS
+          : env.QUORUMX_ASSESSMENT_VERSION === "2" ? env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS : env.QUORUMX_CONTRACT_ADDRESS },
       correlationId,
     }, { status: status === "unready" ? 503 : 200 }, "no-store", correlationId);
   } catch (error) {
@@ -161,6 +188,18 @@ async function route(request: Request, env: Env): Promise<Response> {
     console.log(JSON.stringify({ message: "manual indexer cycle completed", ...result }));
     return json({ ...result, outcome }, { status: outcome === "healthy" ? 200 : outcome === "degraded" ? 207 : 503 }, "no-store", correlationId);
   }
+  if (url.pathname === "/internal/reassess" && request.method === "POST") {
+    const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+    if (!await secureEqual(provided, env.QUORUMX_ADMIN_TOKEN)) return json({ error: "unauthorized" }, { status: 401 });
+    const body = await request.json() as { canonicalId?: unknown; assessmentRunId?: unknown };
+    if (typeof body.canonicalId !== "string" || !body.canonicalId.trim()) return json({ error: "invalid_canonical_id" }, { status: 400 });
+    const canonicalId = body.canonicalId;
+    const runId = typeof body.assessmentRunId === "string" ? body.assessmentRunId : `manual:3:${crypto.randomUUID()}`;
+    const jobId = await withDatabase(env.HYPERDRIVE.connectionString,
+      (client) => createReassessmentJob(client, canonicalId, "3.3", runId));
+    return jobId ? json({ jobId, assessmentRunId: runId }, { status: 202 })
+      : json({ error: "proposal_not_found_or_duplicate_run" }, { status: 409 });
+  }
   if (request.method !== "GET") {
     return json({ error: "method_not_allowed", correlationId }, { status: 405, headers: { allow: "GET" } }, "no-store", correlationId);
   }
@@ -182,6 +221,11 @@ async function route(request: Request, env: Env): Promise<Response> {
       if (url.pathname.startsWith("/v2/proposals/") && url.pathname.endsWith("/due-diligence")) {
         const canonicalId = pathValue(url.pathname.slice("/v2/proposals/".length, -"/due-diligence".length));
         const assessment = await getDueDiligence(client, canonicalId);
+        return assessment ? json({ data: assessment }, {}, publicCache, correlationId) : json({ error: "not_found", correlationId }, { status: 404 }, "no-store", correlationId);
+      }
+      if (url.pathname.startsWith("/v3/proposals/") && url.pathname.endsWith("/due-diligence")) {
+        const canonicalId = pathValue(url.pathname.slice("/v3/proposals/".length, -"/due-diligence".length));
+        const assessment = await getDueDiligenceV3(client, canonicalId, url.searchParams.get("schema") ?? undefined);
         return assessment ? json({ data: assessment }, {}, publicCache, correlationId) : json({ error: "not_found", correlationId }, { status: 404 }, "no-store", correlationId);
       }
       return json({ error: "not_found", correlationId }, { status: 404 }, "no-store", correlationId);

@@ -29,6 +29,35 @@ Verified Studionet deployment:
 
 Keep the v1 address unchanged for historical records.
 
+## Current implementation: format 3
+
+The immutable format 3 contract is deployed on Studionet at
+`0xf183c38364Bc92726E54d3639a6c4f8d107630c7` (deployment transaction
+`0x600796d8eafe99df247004bd8f400b531884894adef8de540409b3bb4befdb50`).
+The deployment finalized with successful GenVM execution. The bounded BIP-930
+assessment transaction
+`0xf23151d9a28c76d39b0a189dc30cd716a777da7c2b13fcbfbbacf5207bdb5d29`
+also finalized with successful leader and participating-validator execution,
+and its immutable run record was read back by assessment-run ID.
+
+Format 3 stores records by immutable run ID, supports schema-specific reads for
+historical compatibility, and preserves all format 1, format 2, and earlier
+format 3 state. Validators independently
+retrieve Snapshot material and derive matching decision-bearing structured
+facts. External verification is limited to fixed dual Ethereum JSON-RPC Safe
+state, bounded Blockscout transaction evidence, and bounded same-space
+Snapshot governance-history references. All external sources are untrusted
+data, are size/schema constrained, and remain explicitly `secondary` unless
+the evidence model states otherwise. No arbitrary URL adapter exists.
+
+The contract source is `governance_due_diligence_v3_3.py`. Python 3.12, the
+pinned `GENVM_VERSION=v0.2.16`, and `genvm-linter` 0.11.0 are required for the
+semantic gate.
+
+Internal format 3 schema history is documented in
+[`docs/FORMAT_HISTORY.md`](../docs/FORMAT_HISTORY.md). Decimal schema labels
+remain only where immutable stored records require exact decoding.
+
 Run deterministic rule tests with:
 
 ```sh
