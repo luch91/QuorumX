@@ -40,40 +40,10 @@ def test_v33_deploy_write_and_read_require_successful_execution(default_account)
     }
 
     run_id = "localnet-v33-release-smoke"
-    sent_hashes = []
-    original_request = client.provider.make_request
-
-    def capture_request(method, params):
-        response = original_request(method=method, params=params)
-        if method == "eth_sendRawTransaction" and response.get("result"):
-            sent_hashes.append(response["result"])
-        return response
-
-    client.provider.make_request = capture_request
-    try:
-        write_hash = client.write_contract(
-            address=contract_address, function_name="assess", account=default_account,
-            args=[json.dumps(SOURCE), run_id],
-        )
-    except Exception:
-        if sent_hashes:
-            outer_receipt = original_request(
-                method="eth_getTransactionReceipt", params=[sent_hashes[-1]])
-            print("failed outer receipt:", json.dumps(outer_receipt, default=str))
-            logs = outer_receipt.get("result", {}).get("logs", [])
-            if logs and len(logs[0].get("topics", [])) > 1:
-                genlayer_hash = logs[0]["topics"][1]
-                try:
-                    print("failed GenLayer transaction:", json.dumps(
-                        client.get_transaction(transaction_hash=genlayer_hash), default=str))
-                except Exception as transaction_error:
-                    print("GenLayer transaction unavailable:", repr(transaction_error))
-            try:
-                print("failed outer trace:", json.dumps(original_request(
-                    method="debug_traceTransaction", params=[sent_hashes[-1], {}]), default=str))
-            except Exception as trace_error:
-                print("outer trace unavailable:", repr(trace_error))
-        raise
+    write_hash = client.write_contract(
+        address=contract_address, function_name="assess", account=default_account,
+        args=[json.dumps(SOURCE), run_id],
+    )
     write_receipt = client.wait_for_transaction_receipt(
         transaction_hash=write_hash, interval=3000, retries=150,
         status=TransactionStatus.ACCEPTED,

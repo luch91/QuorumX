@@ -13,7 +13,10 @@ import json
 import re
 from urllib.parse import quote
 
-MAX_RECORD_BYTES = 22000
+# Format 3 temporal provenance adds bounded per-evidence anchors to the
+# previously accepted report shape. Retain a hard storage ceiling while
+# allowing the maximum production fixture to carry those additive fields.
+MAX_RECORD_BYTES = 26000
 BLOCKSCOUT_TX_API = "https://eth.blockscout.com/api/v2/transactions/"
 BLOCKSCOUT_BLOCK_API = "https://eth.blockscout.com/api/v2/blocks/"
 BLOCKSCOUT_BLOCK_BY_TIME_API = "https://eth.blockscout.com/api?module=block&action=getblocknobytime&closest=before&timestamp="
