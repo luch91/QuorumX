@@ -603,6 +603,12 @@ def fetch_safe_temporal(address, assessment_context, proposal_end, block_pin=Non
         message = str(error)
         failure = message if re.fullmatch(r"rpc_[a-z0-9_]{1,48}", message) else "rpc_adapter_error"
         if assessment_context == "retrospective":
+            # Individual validators can observe different transport/provider
+            # errors while reaching the same epistemic result: historical Safe
+            # state was not independently established. Keep that consensus
+            # fact deterministic; provider-specific failures must not make an
+            # otherwise valid current-state fallback disagree across validators.
+            failure = "rpc_historical_state_unavailable"
             try:
                 safe = fetch_safe_onchain(address, block_pin if temporal_scope_pin == "current_state_observed" else None)
                 safe["temporalScope"] = "current_state_observed"

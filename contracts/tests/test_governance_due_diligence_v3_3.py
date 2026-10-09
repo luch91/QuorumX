@@ -745,6 +745,23 @@ class DueDiligenceV33Test(unittest.TestCase):
             self.m.fetch_historical_safe_onchain = original_historical
             self.m.fetch_safe_onchain = original_current
 
+    def test_historical_provider_failures_normalize_before_current_state_fallback(self):
+        original_historical = self.m.fetch_historical_safe_onchain
+        original_current = self.m.fetch_safe_onchain
+        try:
+            self.m.fetch_historical_safe_onchain = lambda *_args: (_ for _ in ()).throw(
+                ValueError("rpc_historical_boundary_disagreement"))
+            self.m.fetch_safe_onchain = lambda *_args: {"address": "0x" + "1" * 40, "chainId": 1,
+                "blockNumber": 20, "blockHash": "0x" + "a" * 64, "blockTimestamp": 2000,
+                "threshold": 1, "owners": ["0x" + "2" * 40], "providers": ["publicnode", "drpc"]}
+            safe, state, failure = self.m.fetch_safe_temporal("0x" + "1" * 40, "retrospective", 1000)
+            self.assertEqual(state, "retrieved")
+            self.assertEqual(failure, "rpc_historical_state_unavailable")
+            self.assertEqual(safe["temporalScope"], "current_state_observed")
+        finally:
+            self.m.fetch_historical_safe_onchain = original_historical
+            self.m.fetch_safe_onchain = original_current
+
     def test_unavailable_archive_and_current_state_are_nonfatal_unavailable(self):
         original_historical = self.m.fetch_historical_safe_onchain
         original_current = self.m.fetch_safe_onchain
