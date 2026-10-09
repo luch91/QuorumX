@@ -11,6 +11,7 @@ from genlayer import *
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 MAX_RECORD_BYTES = 22000
@@ -21,6 +22,7 @@ ETHEREUM_RPC_PROVIDERS = (
     ("publicnode", "https://ethereum-rpc.publicnode.com"),
     ("drpc", "https://eth.drpc.org"),
 )
+MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS = 26
 RETURN_TX = re.compile(r"https://etherscan\.io/tx/(0x[0-9a-f]{64})", re.I)
 SAFE_ADDRESS = re.compile(r"(?<![0-9A-Fa-f])0x[0-9A-Fa-f]{40}(?![0-9A-Fa-f])")
 SAFE_CONTRACT_ADDRESS = re.compile(
@@ -215,7 +217,7 @@ def source_for(raw):
 
 
 def snapshot_url(proposal_id):
-    query = "query Proposal($id: String!) { proposal(id: $id) { id title body choices state space { id } } }"
+    query = "query Proposal($id: String!) { proposal(id: $id) { id title body choices state end space { id } } }"
     return "https://hub.snapshot.org/graphql?query=" + quote(query, safe="") + "&variables=" + quote(canonical({"id": proposal_id}), safe="")
 
 
@@ -295,17 +297,41 @@ def json_response(response, source_name, max_bytes):
     return parsed
 
 
-def fetch_proposal(source):
+def fetch_proposal_context(source):
+    """Retrieve consensus material plus close time without changing its content hash."""
     response = gl.nondet.web.get(snapshot_url(source["proposalId"]))
     proposal = json_response(response, "Snapshot", 64000).get("data", {}).get("proposal")
     if not proposal or proposal.get("id") != source["proposalId"] or proposal.get("space", {}).get("id") != source["space"]:
         raise ValueError("Snapshot identity mismatch")
+    end = proposal.get("end")
+    if type(end) is not int or end < 1 or end > 4102444800:
+        raise ValueError("invalid Snapshot proposal close time")
     material = canonical({"id": proposal["id"], "space": proposal["space"]["id"],
                           "title": proposal.get("title", ""), "body": proposal.get("body", ""),
                           "choices": proposal.get("choices", []), "state": proposal.get("state", "")})
     if len(material.encode("utf-8")) > 24000:
         raise ValueError("proposal material exceeds limit")
-    return material
+    return {"material": material, "proposalEnd": end}
+
+
+def iso_to_unix(value):
+    if not isinstance(value, str) or len(value) > 80:
+        raise ValueError("invalid assessment time")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        raise ValueError("invalid assessment time") from None
+    if parsed.tzinfo is None:
+        raise ValueError("invalid assessment time")
+    return int(parsed.timestamp())
+
+
+def iso_from_unix(value):
+    return datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def assessment_context_for(proposal_end, assessed_at):
+    return "retrospective" if proposal_end <= iso_to_unix(assessed_at) else "live"
 
 
 def _rpc_call(provider_url, method, params, request_id):
@@ -422,11 +448,17 @@ def fetch_safe_onchain(address, block_pin=None):
         raise ValueError("rpc_invalid_block_hash")
 
     block_tag = "0x" + format(block_number, "x")
+    block_timestamp = None
     for provider_url in (primary_url, secondary_url):
         block = _rpc_call(provider_url, "eth_getBlockByNumber", [block_tag, False], 2)
         if not isinstance(block, dict) or _hex_quantity(block.get("number"), "block number") != block_number \
                 or str(block.get("hash", "")).lower() != block_hash:
             raise ValueError("rpc_block_disagreement")
+        if block.get("timestamp") is not None:
+            timestamp = _hex_quantity(block.get("timestamp"), "block timestamp")
+            if block_timestamp is not None and timestamp != block_timestamp:
+                raise ValueError("rpc_block_disagreement")
+            block_timestamp = timestamp
 
     request = {"to": address, "data": "0xe75235b8"}
     threshold_results = [_rpc_call(url, "eth_call", [request, block_tag], 3) for _, url in ETHEREUM_RPC_PROVIDERS]
@@ -446,7 +478,84 @@ def fetch_safe_onchain(address, block_pin=None):
         raise ValueError("rpc_safe_threshold_exceeds_owners")
     return {"address": address.lower(), "chainId": 1, "blockNumber": block_number,
             "blockHash": block_hash, "threshold": threshold, "owners": owners,
-            "providers": [primary_name, secondary_name]}
+            "blockTimestamp": block_timestamp, "providers": [primary_name, secondary_name]}
+
+
+def fetch_historical_safe_onchain(address, proposal_end, block_pin=None):
+    """Find and verify the last mainnet block at/before close with bounded RPC work."""
+    if type(proposal_end) is not int or proposal_end < 1:
+        raise ValueError("rpc_invalid_historical_time")
+    if block_pin is not None:
+        safe = fetch_safe_onchain(address, block_pin)
+        if safe["blockTimestamp"] is None or safe["blockTimestamp"] > proposal_end:
+            raise ValueError("rpc_historical_boundary_disagreement")
+        return safe
+    primary_url = ETHEREUM_RPC_PROVIDERS[0][1]
+    finalized = _rpc_call(primary_url, "eth_getBlockByNumber", ["finalized", False], 20)
+    if not isinstance(finalized, dict):
+        raise ValueError("rpc_no_finalized_block")
+    high = _hex_quantity(finalized.get("number"), "block number")
+    if _hex_quantity(finalized.get("timestamp"), "block timestamp") <= proposal_end:
+        raise ValueError("rpc_historical_time_not_finalized")
+    low = 1
+    candidate = None
+    for attempt in range(MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS):
+        if low > high:
+            break
+        middle = (low + high) // 2
+        block = _rpc_call(primary_url, "eth_getBlockByNumber", ["0x" + format(middle, "x"), False], 21 + attempt)
+        if not isinstance(block, dict):
+            raise ValueError("rpc_historical_state_unavailable")
+        timestamp = _hex_quantity(block.get("timestamp"), "block timestamp")
+        if timestamp <= proposal_end:
+            candidate = {"blockNumber": middle, "blockHash": str(block.get("hash", "")).lower()}
+            low = middle + 1
+        else:
+            high = middle - 1
+    if low <= high or candidate is None:
+        raise ValueError("rpc_historical_lookup_limit")
+    safe = fetch_safe_onchain(address, candidate)
+    if safe["blockTimestamp"] is None or safe["blockTimestamp"] > proposal_end:
+        raise ValueError("rpc_historical_boundary_disagreement")
+    next_tag = "0x" + format(safe["blockNumber"] + 1, "x")
+    next_values = []
+    for _, provider_url in ETHEREUM_RPC_PROVIDERS:
+        block = _rpc_call(provider_url, "eth_getBlockByNumber", [next_tag, False], 60)
+        if not isinstance(block, dict):
+            raise ValueError("rpc_historical_state_unavailable")
+        next_values.append((_hex_quantity(block.get("number"), "block number"),
+                            str(block.get("hash", "")).lower(),
+                            _hex_quantity(block.get("timestamp"), "block timestamp")))
+    if next_values[0] != next_values[1] or next_values[0][2] <= proposal_end:
+        raise ValueError("rpc_historical_boundary_disagreement")
+    return safe
+
+
+def fetch_safe_temporal(address, assessment_context, proposal_end, block_pin=None, temporal_scope_pin=None):
+    """Return bounded Safe evidence, falling back deterministically for retrospective reviews."""
+    try:
+        if assessment_context == "retrospective":
+            # A validator replays the historical attempt even when the leader
+            # used current-state fallback. This prevents a leader from choosing
+            # the weaker temporal scope when archive state is available.
+            historical_pin = block_pin if temporal_scope_pin != "current_state_observed" else None
+            safe = fetch_historical_safe_onchain(address, proposal_end, historical_pin)
+            safe["temporalScope"] = "historically_anchored"
+        else:
+            safe = fetch_safe_onchain(address, block_pin)
+            safe["temporalScope"] = "current_state_observed"
+        return safe, "retrieved", ""
+    except Exception as error:
+        message = str(error)
+        failure = message if re.fullmatch(r"rpc_[a-z0-9_]{1,48}", message) else "rpc_adapter_error"
+        if assessment_context == "retrospective":
+            try:
+                safe = fetch_safe_onchain(address, block_pin if temporal_scope_pin == "current_state_observed" else None)
+                safe["temporalScope"] = "current_state_observed"
+                return safe, "retrieved", failure
+            except Exception:
+                pass
+        return None, "unavailable", failure
 
 
 def extract_return_table(material):
@@ -694,7 +803,8 @@ def classify_action(line):
 
 def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
                         returned_funds=None, returned_funds_state="not_attempted", safe_failure_code="",
-                        governance_history=None, governance_history_state="not_attempted"):
+                        governance_history=None, governance_history_state="not_attempted",
+                        assessment_context="live"):
     """Deterministic extraction; validators re-run this and compare all fields."""
     passages = split_passages(material)
     actions = []
@@ -764,7 +874,8 @@ def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
             evidence = ["proposal"]
             counter_excerpt = ""
             verification_method = ""
-            if safe_claim and safe_data and address_match.group(1).lower() == safe_address:
+            safe_is_temporally_valid = assessment_context == "live" or (safe_data and safe_data.get("temporalScope") == "historically_anchored")
+            if safe_claim and safe_data and safe_is_temporally_valid and address_match.group(1).lower() == safe_address:
                 claimed = (int(threshold_match.group(1)), int(threshold_match.group(2)))
                 actual = (safe_data["threshold"], len(safe_data["owners"]))
                 matching_parts = int(claimed[0] == actual[0]) + int(claimed[1] == actual[1])
@@ -806,11 +917,18 @@ def derive_record_facts(material, safe_data, safe_adapter_state="not_attempted",
                     evidence = ["proposal", "governance-history-" + str(history_index + 1)]
                     counter_excerpt = plain_text(history_text)[:280]
                     verification_method = "snapshot_governance_history_amount_comparison_v1"
-            if safe_claim and safe_data and address_match.group(1).lower() == safe_address:
+            if safe_claim and safe_data and safe_is_temporally_valid and address_match.group(1).lower() == safe_address:
                 counter_excerpt = (str(safe_data["threshold"]) + "/" + str(len(safe_data["owners"]))
                                    + " threshold and owners reported by two Ethereum RPC providers at block "
                                    + str(safe_data["blockNumber"]))
                 verification_method = "ethereum_mainnet_dual_rpc_safe_config_comparison_v1"
+            elif safe_claim and safe_data and assessment_context == "retrospective" \
+                    and safe_data.get("temporalScope") == "current_state_observed":
+                explanation = "Current Safe state was observed during retrospective review; it is not proof of the Safe configuration at proposal close. The historical claim remains unverified."
+                evidence = ["proposal", "safe-rpc-publicnode", "safe-rpc-drpc"]
+                counter_excerpt = (str(safe_data["threshold"]) + "/" + str(len(safe_data["owners"]))
+                                   + " current threshold and owners observed at Ethereum block " + str(safe_data["blockNumber"]))
+                verification_method = "ethereum_mainnet_dual_rpc_safe_current_state_context_v1"
             claims.append({"claim": text[:280], "sourceExcerpt": line[:280], "counterExcerpt": counter_excerpt,
                            "claimScope": "external_factual", "proposalAssertion": True, "status": status,
                            "explanation": explanation, "evidence": evidence,
@@ -988,12 +1106,17 @@ def reversibility_from_evidence(text):
     return "unknown"
 
 
-def build_report(facts, material, source, assessment_run_id):
+def build_report(facts, material, source, assessment_run_id, temporal_context=None):
     source_hash = digest(material)
     proposal = json.loads(material)
+    temporal_context = temporal_context or {"assessmentContext": "live", "proposalCloseTime": "",
+                                            "evidenceRetrievedAt": gl.message_raw["datetime"]}
     evidence = [{"id": "proposal", "type": "proposal", "locator": "https://snapshot.box/#/s:" + source["space"] + "/proposal/" + source["proposalId"],
                  "description": "Validator-retrieved Snapshot proposal", "contentHash": source_hash,
-                 "verificationScope": "validator_retrieved_proposal", "authority": "primary"}]
+                 "verificationScope": "validator_retrieved_proposal", "authority": "primary",
+                 "temporal": {"retrievedAt": temporal_context["evidenceRetrievedAt"],
+                              "sourceTimestamp": temporal_context.get("proposalCloseTime", ""),
+                              "historicallyAnchored": False, "temporalScope": "unknown"}}]
     if facts["safe"]:
         for provider_name, provider_url in ETHEREUM_RPC_PROVIDERS:
             provider_data = {"provider": provider_name, "address": facts["safe"]["address"],
@@ -1004,7 +1127,13 @@ def build_report(facts, material, source, assessment_run_id):
                              "description": "Safe contract state returned by " + provider_name + " Ethereum JSON-RPC at the pinned block",
                              "contentHash": digest(canonical(provider_data)),
                              "verificationScope": "validator_retrieved_external_source",
-                             "authority": "secondary", "structuredData": provider_data})
+                             "authority": "secondary",
+                             "temporal": {"retrievedAt": temporal_context["evidenceRetrievedAt"],
+                                          "sourceTimestamp": iso_from_unix(facts["safe"]["blockTimestamp"]) if facts["safe"].get("blockTimestamp") else "",
+                                          "blockNumber": facts["safe"]["blockNumber"], "blockHash": facts["safe"]["blockHash"],
+                                          "historicallyAnchored": facts["safe"].get("temporalScope") == "historically_anchored",
+                                          "temporalScope": facts["safe"].get("temporalScope", "current_state_observed")},
+                             "structuredData": provider_data})
     returned_evidence_ids = []
     if facts.get("returnedFundsState") == "retrieved" and facts.get("returnedFunds"):
         for index, item in enumerate(facts["returnedFunds"]["transactions"]):
@@ -1015,7 +1144,11 @@ def build_report(facts, material, source, assessment_run_id):
                              "description": "Blockscout-indexed Ethereum mainnet returned-fund transaction " + str(index + 1),
                              "contentHash": digest(canonical(item)),
                              "verificationScope": "validator_retrieved_external_source",
-                             "authority": "secondary", "structuredData": item})
+                             "authority": "secondary",
+                             "temporal": {"retrievedAt": temporal_context["evidenceRetrievedAt"],
+                                          "blockNumber": item["blockNumber"], "blockHash": item["blockHash"],
+                                          "historicallyAnchored": True, "temporalScope": "inherently_historical"},
+                             "structuredData": item})
     if facts.get("governanceHistoryState") == "retrieved":
         for index, item in enumerate(facts.get("governanceHistory", [])):
             evidence.append({"id": "governance-history-" + str(index + 1),
@@ -1024,7 +1157,10 @@ def build_report(facts, material, source, assessment_run_id):
                              "description": "Validator-retrieved referenced Snapshot proposal",
                              "contentHash": digest(canonical(item)),
                              "verificationScope": "validator_retrieved_external_source",
-                             "authority": "primary", "structuredData": item})
+                             "authority": "primary",
+                             "temporal": {"retrievedAt": temporal_context["evidenceRetrievedAt"],
+                                          "historicallyAnchored": False, "temporalScope": "unknown"},
+                             "structuredData": item})
 
     findings = []
     execution = []
@@ -1247,6 +1383,9 @@ def build_report(facts, material, source, assessment_run_id):
               "safeguardGaps": report_safeguard_gaps, "executionMap": execution,
               "unresolvedQuestions": questions, "reviewPriority": priority,
               "reviewPriorityExplanation": reason, "assessedAt": gl.message_raw["datetime"],
+              "assessmentContext": temporal_context["assessmentContext"],
+              "proposalCloseTime": temporal_context.get("proposalCloseTime", ""),
+              "evidenceRetrievedAt": temporal_context["evidenceRetrievedAt"],
               "provenance": "live", "consensus": {"state": "accepted", "method": "independent_structured_derivation_v3_3"}}
     if len(canonical(record).encode("utf-8")) > MAX_RECORD_BYTES:
         raise ValueError("v3 record exceeds storage limit")
@@ -1359,29 +1498,27 @@ class GovernanceDueDiligenceV33(gl.Contract):
         source_text = canonical(source)
 
         def fetch_agreed_material():
-            return fetch_proposal(json.loads(source_text))
+            return fetch_proposal_context(json.loads(source_text))
 
-        material = gl.eq_principle.strict_eq(fetch_agreed_material)
+        proposal_context = gl.eq_principle.strict_eq(fetch_agreed_material)
+        material = proposal_context["material"]
+        proposal_end = proposal_context["proposalEnd"]
+        assessed_at = gl.message_raw["datetime"]
+        assessment_context = assessment_context_for(proposal_end, assessed_at)
+        temporal_context = {"assessmentContext": assessment_context,
+                            "proposalCloseTime": iso_from_unix(proposal_end),
+                            "evidenceRetrievedAt": assessed_at}
         passages = split_passages(material)
         safe_candidate = safe_candidate_from_material(material)
         history_refs = extract_governance_history_refs(material, source["space"], source["proposalId"])
 
-        def derive(block_pin=None):
+        def derive(block_pin=None, temporal_scope_pin=None):
             safe_data = None
             safe_state = "not_attempted"
             safe_failure_code = ""
             if safe_candidate:
-                try:
-                    safe_data = fetch_safe_onchain(safe_candidate, block_pin)
-                    safe_state = "retrieved"
-                except Exception as error:
-                    # A failed/invalid adapter is not evidence against the
-                    # proposal. Validators still compare that this source was
-                    # unavailable on their own retrieval attempt. Publish only
-                    # an allowlisted reason code, never a URL/body/exception.
-                    safe_state = "unavailable"
-                    message = str(error)
-                    safe_failure_code = message if re.fullmatch(r"rpc_[a-z0-9_]{1,48}", message) else "rpc_adapter_error"
+                safe_data, safe_state, safe_failure_code = fetch_safe_temporal(
+                    safe_candidate, assessment_context, proposal_end, block_pin, temporal_scope_pin)
             returned_funds = None
             returned_state = "not_attempted"
             try:
@@ -1406,7 +1543,8 @@ class GovernanceDueDiligenceV33(gl.Contract):
                 except Exception:
                     governance_history_state = "unavailable"
             return derive_record_facts(material, safe_data, safe_state, returned_funds, returned_state,
-                                       safe_failure_code, governance_history, governance_history_state)
+                                       safe_failure_code, governance_history, governance_history_state,
+                                       assessment_context)
 
         def validate(leader_result):
             if not isinstance(leader_result, gl.vm.Return):
@@ -1418,13 +1556,14 @@ class GovernanceDueDiligenceV33(gl.Contract):
                 leader_safe = leader_facts.get("safe")
                 block_pin = ({"blockNumber": leader_safe.get("blockNumber"), "blockHash": leader_safe.get("blockHash")}
                              if isinstance(leader_safe, dict) else None)
-                validator_facts = derive(block_pin)
+                temporal_scope_pin = leader_safe.get("temporalScope") if isinstance(leader_safe, dict) else None
+                validator_facts = derive(block_pin, temporal_scope_pin)
                 return canonical(validator_facts) == canonical(leader_result.calldata)
             except Exception:
                 return False
 
         facts = gl.vm.run_nondet_unsafe(derive, validate)
-        record = build_report(facts, material, source, run_id)
+        record = build_report(facts, material, source, run_id, temporal_context)
         record["proposalKey"] = key
         record_key = "run:" + run_id
         stored = canonical(record)

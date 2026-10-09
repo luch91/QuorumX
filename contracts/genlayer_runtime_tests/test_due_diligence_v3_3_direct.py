@@ -66,6 +66,7 @@ def set_snapshot_body(vm, body, title="Runtime proposal"):
                         "body": body,
                         "choices": ["For", "Against"],
                         "state": "active",
+                        "end": 1893456000,
                         "space": {"id": SOURCE["space"]},
                     }
                 }
@@ -99,7 +100,7 @@ def set_safe_mocks(vm, drpc_threshold):
             "status": 200,
             "body": json.dumps({"data": {"proposal": {
                 "id": SOURCE["proposalId"], "title": "Safe review", "body": body,
-                "choices": ["For", "Against"], "state": "active",
+                "choices": ["For", "Against"], "state": "active", "end": 1893456000,
                 "space": {"id": SOURCE["space"]},
             }}}),
         },
@@ -238,7 +239,7 @@ def set_governance_history_handler(vm, prior_amount):
         else:
             payload = {"data": {"proposal": {
                 "id": SOURCE["proposalId"], "title": "Follow-up", "body": body,
-                "choices": ["For", "Against"], "state": "active",
+                "choices": ["For", "Against"], "state": "active", "end": 1893456000,
                 "space": {"id": "safe.eth"},
             }}}
         return {"ok": {"response": {"status": 200,

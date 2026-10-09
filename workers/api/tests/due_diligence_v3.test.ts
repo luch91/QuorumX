@@ -115,6 +115,26 @@ async function schema33Record() {
   return value;
 }
 
+async function temporalSchema33Record(scope: "historically_anchored" | "current_state_observed" = "historically_anchored") {
+  const value: any = await schema33Record();
+  Object.assign(value, { assessmentContext: "retrospective", proposalCloseTime: "2026-09-01T00:00:00Z",
+    evidenceRetrievedAt: "2026-10-04T00:00:00Z" });
+  for (const item of value.evidence) {
+    item.temporal = item.type === "safe_onchain"
+      ? { retrievedAt: value.evidenceRetrievedAt, sourceTimestamp: "2026-08-31T23:59:48Z",
+          blockNumber: item.structuredData.blockNumber, blockHash: item.structuredData.blockHash,
+          historicallyAnchored: scope === "historically_anchored", temporalScope: scope }
+      : { retrievedAt: value.evidenceRetrievedAt, sourceTimestamp: value.proposalCloseTime,
+          historicallyAnchored: false, temporalScope: "unknown" };
+  }
+  if (scope === "current_state_observed") {
+    Object.assign(value.materialClaims[0], { status: "unverified",
+      explanation: "Current Safe state is not proof of configuration at proposal close.",
+      verificationMethod: "ethereum_mainnet_dual_rpc_safe_current_state_context_v1" });
+  }
+  return value;
+}
+
 async function schema33ReturnedFundsRecord(count: number) {
   const value = await schema33Record();
   const destination = String((value.evidence.find((item) => item.id === "safe-rpc-publicnode")!.structuredData as Record<string, unknown>).address);
@@ -142,6 +162,28 @@ async function schema33ReturnedFundsRecord(count: number) {
 }
 
 describe("v3 due-diligence parser", () => {
+  it("accepts retrospective historically anchored Safe evidence", async () => {
+    const parsed = await parseDueDiligenceV3(await temporalSchema33Record(), proposalKey);
+    expect(parsed?.assessmentContext).toBe("retrospective");
+    expect(parsed?.evidence[1].temporal?.temporalScope).toBe("historically_anchored");
+    const serialized = JSON.parse(JSON.stringify(parsed));
+    expect(serialized.proposalCloseTime).toBe("2026-09-01T00:00:00Z");
+    expect(serialized.evidenceRetrievedAt).toBe("2026-10-04T00:00:00Z");
+  });
+
+  it("accepts legacy schema 3.3 records without temporal fields", async () => {
+    expect((await parseDueDiligenceV3(await schema33Record(), proposalKey))?.assessmentContext).toBeUndefined();
+  });
+
+  it("rejects malformed temporal metadata and retrospective current-state claim upgrades", async () => {
+    const malformed = await temporalSchema33Record();
+    malformed.evidence[1].temporal.blockHash = "0xdead";
+    await expect(parseDueDiligenceV3(malformed, proposalKey)).rejects.toThrow("temporal block anchor");
+
+    const upgraded = await temporalSchema33Record("current_state_observed");
+    Object.assign(upgraded.materialClaims[0], { status: "supported", verificationMethod: "ethereum_mainnet_dual_rpc_safe_config_comparison_v1" });
+    await expect(parseDueDiligenceV3(upgraded, proposalKey)).rejects.toThrow("lacks historical anchor");
+  });
   it("accepts the immutable schema 3.3 report and its relationship graph", async () => {
     const parsed = await parseDueDiligenceV3(await schema33Record(), proposalKey);
     expect(parsed?.assessmentSchemaVersion).toBe("3.3");

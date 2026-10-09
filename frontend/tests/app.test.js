@@ -415,4 +415,21 @@ describe("QuorumX frontend helpers", () => {
     expect(html).not.toContain('href="#"');
     expect(html).not.toContain("<img src=x");
   });
+
+  test("renders escaped retrospective disclosure and current-state Safe limitation", () => {
+    const html = renderDueDiligence({ assessmentVersion: "3", assessmentSchemaVersion: "3.3",
+      assessmentContext: "retrospective", proposalCloseTime: "2026-09-01T00:00:00Z",
+      evidenceRetrievedAt: "2026-10-04T00:00:00Z", externalEvidenceState: "retrieved", returnedFundsState: "not_attempted",
+      overview: { purpose: "Review Safe", requestedActions: [], assetsAffected: [], permissionsChanged: [], controlChanges: [] },
+      evidence: [{ id: "safe-rpc-publicnode", type: "safe_onchain", locator: "https://ethereum-rpc.publicnode.com",
+        description: "Current Safe state <script>alert(1)</script>", contentHash: "a".repeat(64), verificationScope: "validator_retrieved_external_source", authority: "secondary",
+        temporal: { retrievedAt: "2026-10-04T00:00:00Z", temporalScope: "current_state_observed", historicallyAnchored: false },
+        structuredData: { provider: "publicnode", blockNumber: 25000000, blockHash: "0x" + "d".repeat(64), threshold: 2, owners: ["0x" + "2".repeat(40)] } }],
+      materialClaims: [], findings: [], executionMap: [], unresolvedQuestions: [], safeguardGaps: [],
+      reviewPriority: "low", reviewPriorityExplanation: "Review." });
+    expect(html).toContain("Retrospective review");
+    expect(html).toContain("Safe state observed during assessment; not proof of configuration at proposal close.");
+    expect(html).toContain("Current State Observed");
+    expect(html).not.toContain("<script>");
+  });
 });

@@ -108,6 +108,7 @@ export interface StoredDueDiligenceAssessment {
 
 export type V3EvidenceAuthority = "primary" | "secondary" | "contextual";
 export type V3VerificationScope = "validator_retrieved_proposal" | "validator_retrieved_external_source";
+export type V3TemporalScope = "historically_anchored" | "current_state_observed" | "inherently_historical" | "unknown";
 
 export interface DueDiligenceV3Evidence {
   id: string;
@@ -117,6 +118,8 @@ export interface DueDiligenceV3Evidence {
   contentHash: string;
   verificationScope: V3VerificationScope;
   authority: V3EvidenceAuthority;
+  temporal?: { retrievedAt: string; sourceTimestamp?: string; blockNumber?: number; blockHash?: string;
+    historicallyAnchored: boolean; temporalScope: V3TemporalScope };
   structuredData?: { address: string; threshold: number; owners: string[]; version: string }
     | { provider: "publicnode" | "drpc"; address: string; chainId: 1; blockNumber: number;
         blockHash: string; threshold: number; owners: string[] }
@@ -130,6 +133,9 @@ export interface StoredDueDiligenceV3Assessment {
   assessmentVersion: "3";
   assessmentSchemaVersion?: "3.1" | "3.2" | "3.3";
   assessmentRunId?: string;
+  assessmentContext?: "live" | "retrospective";
+  proposalCloseTime?: string;
+  evidenceRetrievedAt?: string;
   proposalKey: string;
   contentHash: string;
   sourceLocatorHash: string;
