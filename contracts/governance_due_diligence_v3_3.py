@@ -1558,9 +1558,12 @@ class GovernanceDueDiligenceV33(gl.Contract):
         source_text = canonical(source)
 
         def fetch_agreed_material():
-            return fetch_proposal_context(json.loads(source_text))
+            # strict_eq's established contract boundary is a canonical string.
+            # Keep the close time inside that agreed payload without relying on
+            # GenVM to transport an arbitrary Python object between validators.
+            return canonical(fetch_proposal_context(json.loads(source_text)))
 
-        proposal_context = gl.eq_principle.strict_eq(fetch_agreed_material)
+        proposal_context = json.loads(gl.eq_principle.strict_eq(fetch_agreed_material))
         material = proposal_context["material"]
         proposal_end = proposal_context["proposalEnd"]
         assessed_at = gl.message_raw["datetime"]
