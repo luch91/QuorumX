@@ -8,6 +8,7 @@ import pytest
 
 
 SOURCE = {"kind": "snapshot", "space": "safe.eth", "proposalId": "generic-distribution-1"}
+GENVM_SDK_VERSION = "v0.2.16"
 SAFE_ADDRESS = "0x1111111111111111111111111111111111111111"
 SAFE_OWNERS = [
     "0x2222222222222222222222222222222222222222",
@@ -137,6 +138,7 @@ def test_v33_generic_distribution_is_source_grounded_and_reproducible(
         "contracts/governance_due_diligence_v3_3.py",
         operator,
         json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
     )
     set_snapshot_mock(direct_vm)
     direct_vm.sender = direct_alice
@@ -162,6 +164,7 @@ def test_v33_rejects_unauthorized_writer_and_disallowed_space(
         "contracts/governance_due_diligence_v3_3.py",
         operator,
         json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
     )
     set_snapshot_mock(direct_vm)
 
@@ -184,6 +187,7 @@ def test_v33_validator_rejects_different_decision_bearing_safe_state(
         "contracts/governance_due_diligence_v3_3.py",
         operator,
         json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
     )
     set_safe_mocks(direct_vm, drpc_threshold=2)
     direct_vm.sender = direct_alice
@@ -204,6 +208,7 @@ def test_v33_accepts_bounded_dynamic_returned_fund_cardinality(
         "contracts/governance_due_diligence_v3_3.py",
         operator,
         json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
     )
     set_snapshot_body(direct_vm, returned_table_body(row_count), "Returned funds")
     direct_vm.sender = direct_alice
@@ -251,6 +256,7 @@ def test_v33_governance_history_is_validator_retrieved_and_disagreement_rejects(
         "contracts/governance_due_diligence_v3_3.py",
         operator,
         json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
     )
     set_governance_history_handler(direct_vm, "3M")
     direct_vm.sender = direct_alice
