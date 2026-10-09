@@ -11,18 +11,18 @@ from genlayer import *
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
 from urllib.parse import quote
 
 MAX_RECORD_BYTES = 22000
 BLOCKSCOUT_TX_API = "https://eth.blockscout.com/api/v2/transactions/"
 BLOCKSCOUT_BLOCK_API = "https://eth.blockscout.com/api/v2/blocks/"
+BLOCKSCOUT_BLOCK_BY_TIME_API = "https://eth.blockscout.com/api?module=block&action=getblocknobytime&closest=before&timestamp="
 BLOCKSCOUT_TX_PAGE = "https://eth.blockscout.com/tx/"
 ETHEREUM_RPC_PROVIDERS = (
     ("publicnode", "https://ethereum-rpc.publicnode.com"),
     ("drpc", "https://eth.drpc.org"),
 )
-MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS = 26
+MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS = 1
 RETURN_TX = re.compile(r"https://etherscan\.io/tx/(0x[0-9a-f]{64})", re.I)
 SAFE_ADDRESS = re.compile(r"(?<![0-9A-Fa-f])0x[0-9A-Fa-f]{40}(?![0-9A-Fa-f])")
 SAFE_CONTRACT_ADDRESS = re.compile(
@@ -317,17 +317,42 @@ def fetch_proposal_context(source):
 def iso_to_unix(value):
     if not isinstance(value, str) or len(value) > 80:
         raise ValueError("invalid assessment time")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        raise ValueError("invalid assessment time") from None
-    if parsed.tzinfo is None:
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z", value)
+    if not match:
         raise ValueError("invalid assessment time")
-    return int(parsed.timestamp())
+    year, month, day, hour, minute, second = [int(part) for part in match.groups()]
+    if not 1970 <= year <= 2100 or not 1 <= month <= 12 or hour > 23 or minute > 59 or second > 59:
+        raise ValueError("invalid assessment time")
+    month_days = [31, 29 if is_leap_year(year) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if not 1 <= day <= month_days[month - 1]:
+        raise ValueError("invalid assessment time")
+    days = sum(366 if is_leap_year(item) else 365 for item in range(1970, year))
+    days += sum(month_days[:month - 1]) + day - 1
+    return days * 86400 + hour * 3600 + minute * 60 + second
 
 
 def iso_from_unix(value):
-    return datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if type(value) is not int or value < 0 or value > 4102444800:
+        raise ValueError("invalid Unix time")
+    days, remainder = divmod(value, 86400)
+    year = 1970
+    while days >= (366 if is_leap_year(year) else 365):
+        days -= 366 if is_leap_year(year) else 365
+        year += 1
+    month_days = [31, 29 if is_leap_year(year) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    month = 1
+    for length in month_days:
+        if days < length:
+            break
+        days -= length
+        month += 1
+    hour, remainder = divmod(remainder, 3600)
+    minute, second = divmod(remainder, 60)
+    return "%04d-%02d-%02dT%02d:%02d:%02dZ" % (year, month, days + 1, hour, minute, second)
+
+
+def is_leap_year(year):
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 
 def assessment_context_for(proposal_end, assessed_at):
@@ -481,40 +506,35 @@ def fetch_safe_onchain(address, block_pin=None):
             "blockTimestamp": block_timestamp, "providers": [primary_name, secondary_name]}
 
 
+def fetch_historical_block_candidate(proposal_end):
+    try:
+        response = gl.nondet.web.get(BLOCKSCOUT_BLOCK_BY_TIME_API + str(proposal_end))
+        payload = json_response(response, "Blockscout historical block locator", 4096)
+        result = payload.get("result")
+        if payload.get("status") != "1" or not isinstance(result, dict):
+            raise ValueError("invalid locator response")
+        block_number = int(str(result.get("blockNumber", "")))
+        if block_number < 1:
+            raise ValueError("invalid locator block")
+    except Exception:
+        raise ValueError("rpc_historical_state_unavailable") from None
+    return block_number
+
+
 def fetch_historical_safe_onchain(address, proposal_end, block_pin=None):
-    """Find and verify the last mainnet block at/before close with bounded RPC work."""
+    """Discover one candidate, then make both RPCs verify its boundary and Safe state."""
     if type(proposal_end) is not int or proposal_end < 1:
         raise ValueError("rpc_invalid_historical_time")
     if block_pin is not None:
         safe = fetch_safe_onchain(address, block_pin)
-        if safe["blockTimestamp"] is None or safe["blockTimestamp"] > proposal_end:
-            raise ValueError("rpc_historical_boundary_disagreement")
-        return safe
-    primary_url = ETHEREUM_RPC_PROVIDERS[0][1]
-    finalized = _rpc_call(primary_url, "eth_getBlockByNumber", ["finalized", False], 20)
-    if not isinstance(finalized, dict):
-        raise ValueError("rpc_no_finalized_block")
-    high = _hex_quantity(finalized.get("number"), "block number")
-    if _hex_quantity(finalized.get("timestamp"), "block timestamp") <= proposal_end:
-        raise ValueError("rpc_historical_time_not_finalized")
-    low = 1
-    candidate = None
-    for attempt in range(MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS):
-        if low > high:
-            break
-        middle = (low + high) // 2
-        block = _rpc_call(primary_url, "eth_getBlockByNumber", ["0x" + format(middle, "x"), False], 21 + attempt)
-        if not isinstance(block, dict):
+    else:
+        block_number = fetch_historical_block_candidate(proposal_end)
+        primary_url = ETHEREUM_RPC_PROVIDERS[0][1]
+        candidate_block = _rpc_call(primary_url, "eth_getBlockByNumber", ["0x" + format(block_number, "x"), False], 20)
+        if not isinstance(candidate_block, dict):
             raise ValueError("rpc_historical_state_unavailable")
-        timestamp = _hex_quantity(block.get("timestamp"), "block timestamp")
-        if timestamp <= proposal_end:
-            candidate = {"blockNumber": middle, "blockHash": str(block.get("hash", "")).lower()}
-            low = middle + 1
-        else:
-            high = middle - 1
-    if low <= high or candidate is None:
-        raise ValueError("rpc_historical_lookup_limit")
-    safe = fetch_safe_onchain(address, candidate)
+        candidate = {"blockNumber": block_number, "blockHash": str(candidate_block.get("hash", "")).lower()}
+        safe = fetch_safe_onchain(address, candidate)
     if safe["blockTimestamp"] is None or safe["blockTimestamp"] > proposal_end:
         raise ValueError("rpc_historical_boundary_disagreement")
     next_tag = "0x" + format(safe["blockNumber"] + 1, "x")
