@@ -12,7 +12,13 @@ const SAFE_RPC_PROVIDERS = {
 } as const;
 const STATES = new Set(["supported", "partially_supported", "unverified", "contradicted", "not_applicable"]);
 const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
-const SAFE_FAILURE_CODE = /^(?:rpc_(?:publicnode|drpc)_(?:request_error|invalid_http_status|http_[1-5][0-9]{2}|invalid_body|response_too_large|invalid_json|invalid_envelope|remote_error)|rpc_(?:not_mainnet|no_finalized_block|invalid_block_pin|invalid_block_hash|block_disagreement|safe_call_disagreement|safe_threshold_invalid|safe_owners_invalid|safe_threshold_exceeds_owners|invalid_safe_address|adapter_error))$/;
+const SAFE_FAILURE_CODE = /^(?:rpc_(?:publicnode|drpc)_(?:request_error|invalid_http_status|http_[1-5][0-9]{2}|invalid_body|response_too_large|invalid_json|invalid_envelope|remote_error|batch_http_error|invalid_batch)|rpc_(?:not_mainnet|no_finalized_block|invalid_block_pin|invalid_block_hash|block_disagreement|safe_call_disagreement|safe_threshold_invalid|safe_owners_invalid|safe_threshold_exceeds_owners|invalid_safe_address|invalid_batch|adapter_error|invalid_historical_time|historical_boundary_disagreement|historical_state_unavailable|historical_time_not_finalized|historical_lookup_limit))$/;
+const TEMPORAL_SCOPES = new Set(["historically_anchored", "current_state_observed", "inherently_historical", "unknown"]);
+function iso(value: unknown, field: string, optional = false): string {
+  const result = str(value, field, 80, optional);
+  if (result && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(result) || Number.isNaN(Date.parse(result)))) throw new Error(`Invalid v3 ${field}`);
+  return result;
+}
 
 function object(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid v3 ${field}`);
@@ -49,6 +55,12 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
   const schema33 = record.assessmentSchemaVersion === "3.3";
   if (schema33 && recordBytes > 22_000) throw new Error("Invalid v3.3 assessment size");
   if (schema33) str(record.assessmentRunId, "assessment run ID", 120);
+  const hasTemporalContext = record.assessmentContext !== undefined || record.proposalCloseTime !== undefined || record.evidenceRetrievedAt !== undefined;
+  if (hasTemporalContext) {
+    if (!schema33 || !["live", "retrospective"].includes(String(record.assessmentContext))) throw new Error("Invalid v3 assessment context");
+    iso(record.proposalCloseTime, "proposal close time");
+    iso(record.evidenceRetrievedAt, "evidence retrieval time");
+  }
   if (typeof record.contentHash !== "string" || !HASH.test(record.contentHash)
       || typeof record.sourceLocatorHash !== "string" || !HASH.test(record.sourceLocatorHash)) throw new Error("Invalid v3 hashes");
 
@@ -147,6 +159,20 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
     } else {
       throw new Error("Unsupported v3 evidence type");
     }
+    if (hasTemporalContext) {
+      const temporal = object(item.temporal, "evidence temporal metadata");
+      iso(temporal.retrievedAt, "evidence retrievedAt");
+      if (temporal.retrievedAt !== record.evidenceRetrievedAt) throw new Error("Invalid v3 evidence retrieval time");
+      if (temporal.sourceTimestamp !== undefined) iso(temporal.sourceTimestamp, "evidence source timestamp", true);
+      if (!TEMPORAL_SCOPES.has(String(temporal.temporalScope)) || typeof temporal.historicallyAnchored !== "boolean"
+          || (temporal.historicallyAnchored !== ["historically_anchored", "inherently_historical"].includes(String(temporal.temporalScope)))) {
+        throw new Error("Invalid v3 evidence temporal scope");
+      }
+      if (item.type === "safe_onchain" || item.type === "onchain") {
+        const structured = object(item.structuredData, "temporal structured data");
+        if (temporal.blockNumber !== structured.blockNumber || temporal.blockHash !== structured.blockHash) throw new Error("Invalid v3 temporal block anchor");
+      }
+    }
     str(item.locator, "evidence locator", 300);
     return item;
   }));
@@ -176,7 +202,9 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
   }
   if (record.externalEvidenceFailureCode !== undefined) {
     const code = str(record.externalEvidenceFailureCode, "external evidence failure code", 64, true);
-    if ((code && (record.externalEvidenceState !== "unavailable" || !SAFE_FAILURE_CODE.test(code)))
+    const retrospectiveFallback = record.assessmentContext === "retrospective" && record.externalEvidenceState === "retrieved"
+      && safeRpcEvidence.every((item) => item && object(item.temporal, "Safe temporal metadata").temporalScope === "current_state_observed");
+    if ((code && ((!retrospectiveFallback && record.externalEvidenceState !== "unavailable") || !SAFE_FAILURE_CODE.test(code)))
         || (!code && record.externalEvidenceState === "unavailable" && ["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)))) {
       throw new Error("Invalid v3 external evidence failure code");
     }
@@ -262,6 +290,10 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
           throw new Error("V3 verified Safe claim lacks matching dual-RPC evidence");
         }
         const safeData = object(evidenceById.get("safe-rpc-publicnode")?.structuredData, "verified on-chain Safe state");
+        if (record.assessmentContext === "retrospective") {
+          const temporal = object(evidenceById.get("safe-rpc-publicnode")?.temporal, "verified Safe temporal metadata");
+          if (temporal.temporalScope !== "historically_anchored") throw new Error("Retrospective Safe claim lacks historical anchor");
+        }
         const claimedAddress = claimExcerpt.match(/0x[0-9a-f]{40}/i)?.[0].toLowerCase();
         const threshold = claimExcerpt.match(/\b(\d{1,2})\s*(?:\/|of)\s*(\d{1,2})\b/i);
         if (!claimedAddress || claimedAddress !== safeData.address || !threshold) throw new Error("V3 Safe claim does not identify the verified address and threshold");

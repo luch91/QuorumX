@@ -51,7 +51,7 @@ def generic_fixture():
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def set_snapshot_body(vm, body, title="Runtime proposal"):
+def set_snapshot_body(vm, body, title="Runtime proposal", state="active", end=1893456000):
     vm.clear_mocks()
     vm.mock_web(
         r"^https://hub\.snapshot\.org/graphql\?",
@@ -65,7 +65,8 @@ def set_snapshot_body(vm, body, title="Runtime proposal"):
                         "title": title,
                         "body": body,
                         "choices": ["For", "Against"],
-                        "state": "active",
+                        "state": state,
+                        "end": end,
                         "space": {"id": SOURCE["space"]},
                     }
                 }
@@ -89,7 +90,7 @@ def returned_table_body(row_count):
         + f"\n| **Total** | {sum(range(1, row_count + 1))}.000000 | |"
 
 
-def set_safe_mocks(vm, drpc_threshold):
+def set_safe_mocks(vm, drpc_threshold, state="active", end=1893456000, historical_success=False):
     body = f"Ethereum Mainnet Safe address: {SAFE_ADDRESS} has threshold 2/3."
     vm.clear_mocks()
     vm.mock_web(
@@ -99,18 +100,39 @@ def set_safe_mocks(vm, drpc_threshold):
             "status": 200,
             "body": json.dumps({"data": {"proposal": {
                 "id": SOURCE["proposalId"], "title": "Safe review", "body": body,
-                "choices": ["For", "Against"], "state": "active",
+                "choices": ["For", "Against"], "state": state, "end": end,
                 "space": {"id": SOURCE["space"]},
             }}}),
         },
     )
 
     def rpc_handler(request):
+        if historical_success and request["url"].startswith("https://eth.blockscout.com/api?"):
+            return {"ok": {"response": {"status": 200, "headers": {}, "body": json.dumps({
+                "status": "1", "result": {"blockNumber": "10"},
+            }).encode()}}}
         payload = request["body"]
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
         if isinstance(payload, str):
             payload = json.loads(payload)
+        if isinstance(payload, list):
+            responses = []
+            for item in payload:
+                method = item["method"]
+                if method == "eth_chainId":
+                    result = "0x1"
+                elif method == "eth_getBlockByNumber":
+                    number = int(item["params"][0], 16)
+                    result = {"number": hex(number), "hash": "0x" + ("a" if number == 10 else "b") * 64,
+                              "timestamp": hex(end - 1 if number == 10 else end + 1)}
+                elif method == "eth_call" and item["params"][0]["data"] == "0xe75235b8":
+                    result = "0x" + format(2, "064x")
+                elif method == "eth_call" and item["params"][0]["data"] == "0xa0e67e2b":
+                    result = "0x" + format(32, "064x") + format(len(SAFE_OWNERS), "064x")
+                    result += "".join(owner[2:].rjust(64, "0") for owner in SAFE_OWNERS)
+                responses.append({"jsonrpc": "2.0", "id": item["id"], "result": result})
+            return {"ok": {"response": {"status": 200, "headers": {}, "body": json.dumps(responses).encode()}}}
         method = payload["method"]
         if method == "eth_chainId":
             result = "0x1"
@@ -153,6 +175,74 @@ def test_v33_generic_distribution_is_source_grounded_and_reproducible(
     assert "pre-exploit block 25872248" not in rendered
     assert "per-pool allocations" not in rendered
     assert "claim contract" not in rendered
+    assert direct_vm.run_validator() is True
+
+
+def test_v33_retrospective_context_runs_in_genvm(
+        direct_vm, direct_deploy, direct_owner, direct_alice):
+    operator = "0x" + bytes(direct_alice).hex()
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(
+        "contracts/governance_due_diligence_v3_3.py",
+        operator,
+        json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
+    )
+    set_snapshot_body(direct_vm, "Publish a retrospective incident report.",
+                      state="closed", end=1791309600)
+    direct_vm.sender = direct_alice
+
+    record = json.loads(contract.assess(json.dumps(SOURCE), "direct-v33-retrospective"))
+
+    assert record["assessmentContext"] == "retrospective"
+    assert record["proposalCloseTime"] == "2026-10-06T18:00:00Z"
+    assert direct_vm.run_validator() is True
+
+
+def test_v33_retrospective_safe_falls_back_without_historical_upgrade_in_genvm(
+        direct_vm, direct_deploy, direct_owner, direct_alice):
+    operator = "0x" + bytes(direct_alice).hex()
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(
+        "contracts/governance_due_diligence_v3_3.py",
+        operator,
+        json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
+    )
+    set_safe_mocks(direct_vm, drpc_threshold=2, state="closed", end=1791309600)
+    direct_vm.sender = direct_alice
+
+    record = json.loads(contract.assess(json.dumps(SOURCE), "direct-v33-retrospective-safe"))
+    claim = next(item for item in record["materialClaims"] if item["claimScope"] == "external_factual")
+
+    assert record["assessmentContext"] == "retrospective"
+    assert record["externalEvidenceState"] == "retrieved"
+    assert record["externalEvidenceFailureCode"] == "rpc_historical_state_unavailable"
+    assert claim["status"] == "unverified"
+    assert direct_vm.run_validator() is True
+
+
+def test_v33_retrospective_safe_historical_success_runs_in_genvm(
+        direct_vm, direct_deploy, direct_owner, direct_alice):
+    operator = "0x" + bytes(direct_alice).hex()
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(
+        "contracts/governance_due_diligence_v3_3.py",
+        operator,
+        json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
+    )
+    set_safe_mocks(direct_vm, drpc_threshold=2, state="closed", end=1791309600,
+                   historical_success=True)
+    direct_vm.sender = direct_alice
+
+    record = json.loads(contract.assess(json.dumps(SOURCE), "direct-v33-retrospective-historical"))
+    claim = next(item for item in record["materialClaims"] if item["claimScope"] == "external_factual")
+
+    assert record["assessmentContext"] == "retrospective"
+    assert record["externalEvidenceFailureCode"] == ""
+    assert record["evidence"][1]["temporal"]["temporalScope"] == "historically_anchored"
+    assert claim["status"] == "supported"
     assert direct_vm.run_validator() is True
 
 
@@ -238,7 +328,7 @@ def set_governance_history_handler(vm, prior_amount):
         else:
             payload = {"data": {"proposal": {
                 "id": SOURCE["proposalId"], "title": "Follow-up", "body": body,
-                "choices": ["For", "Against"], "state": "active",
+                "choices": ["For", "Against"], "state": "active", "end": 1893456000,
                 "space": {"id": "safe.eth"},
             }}}
         return {"ok": {"response": {"status": 200,

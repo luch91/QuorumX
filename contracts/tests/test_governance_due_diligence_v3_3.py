@@ -283,7 +283,7 @@ class DueDiligenceV33Test(unittest.TestCase):
                     self.m.gl = types.SimpleNamespace(nondet=types.SimpleNamespace(
                         web=types.SimpleNamespace(get=lambda _url, value=response: value)))
                     with self.assertRaisesRegex(ValueError, message):
-                        self.m.fetch_proposal(source)
+                        self.m.fetch_proposal_context(source)
         finally:
             self.m.gl = original_gl
 
@@ -566,6 +566,7 @@ class DueDiligenceV33Test(unittest.TestCase):
             "body": "Transfer 10 ETH to the community treasury.",
             "choices": ["For", "Against"],
             "state": "active",
+            "end": 1798761600,
         }
 
         class Response:
@@ -585,6 +586,7 @@ class DueDiligenceV33Test(unittest.TestCase):
 
         self.m.gl.message.sender_address = operator_1
         record = json.loads(contract.assess(source, "run-1"))
+        self.assertEqual(record["assessmentContext"], "live")
         self.assertEqual(record["assessmentRunId"], "run-1")
         self.assertEqual(json.loads(contract.get_assessment_by_run("run-1"))["contentHash"], record["contentHash"])
         self.assertEqual(json.loads(contract.get_assessment_for_schema(record["proposalKey"], "3.3"))["assessmentRunId"], "run-1")
@@ -628,6 +630,151 @@ class DueDiligenceV33Test(unittest.TestCase):
         source = json.dumps({"kind": "snapshot", "space": "safe.eth", "proposalId": "p2"})
         with self.assertRaisesRegex(UserError, "another proposal"):
             contract.assess(source, "run-1")
+
+    def test_retrospective_current_safe_state_cannot_verify_historical_claim(self):
+        self.assertEqual(self.m.assessment_context_for("closed"), "retrospective")
+        self.assertEqual(self.m.assessment_context_for("active"), "live")
+        address = "0x" + "1" * 40
+        material = self.m.canonical({"id": "p1", "space": "safe.eth", "title": "Safe state",
+            "body": f"Safe address: {address} on Ethereum mainnet has a 2/2 threshold.",
+            "choices": ["For", "Against"], "state": "closed"})
+        safe = {"address": address, "chainId": 1, "blockNumber": 20, "blockHash": "0x" + "a" * 64,
+                "blockTimestamp": 2000, "threshold": 2, "owners": ["0x" + "2" * 40, "0x" + "3" * 40],
+                "providers": ["publicnode", "drpc"], "temporalScope": "current_state_observed"}
+        facts = self.m.derive_record_facts(material, safe, "retrieved", assessment_context="retrospective")
+        claim = next(item for item in facts["claims"] if item["claimScope"] == "external_factual")
+        self.assertEqual(claim["status"], "unverified")
+        self.assertEqual(claim["verificationMethod"], "ethereum_mainnet_dual_rpc_safe_current_state_context_v1")
+        self.assertIn("not proof", claim["explanation"])
+
+    def test_historically_anchored_safe_can_verify_retrospective_claim(self):
+        address = "0x" + "1" * 40
+        material = self.m.canonical({"id": "p1", "space": "safe.eth", "title": "Safe state",
+            "body": f"Safe address: {address} on Ethereum mainnet has a 2/2 threshold.",
+            "choices": ["For", "Against"], "state": "closed"})
+        safe = {"address": address, "chainId": 1, "blockNumber": 10, "blockHash": "0x" + "a" * 64,
+                "blockTimestamp": 1000, "threshold": 2, "owners": ["0x" + "2" * 40, "0x" + "3" * 40],
+                "providers": ["publicnode", "drpc"], "temporalScope": "historically_anchored"}
+        facts = self.m.derive_record_facts(material, safe, "retrieved", assessment_context="retrospective")
+        claim = next(item for item in facts["claims"] if item["claimScope"] == "external_factual")
+        self.assertEqual(claim["status"], "supported")
+
+    def test_historical_lookup_is_bounded_and_dual_provider_confirmed(self):
+        original_batch = self.m._rpc_batch
+        original_candidate = self.m.fetch_historical_block_candidate
+        calls = []
+        try:
+            def batch(url, _calls):
+                calls.append(url)
+                owner = "0x" + "2" * 40
+                owners = "0x" + format(32, "064x") + format(1, "064x") + owner[2:].rjust(64, "0")
+                return ["0x1", {"number": "0xa", "hash": "0x" + "a" * 64, "timestamp": hex(1000)},
+                        {"number": "0xb", "hash": "0x" + "b" * 64, "timestamp": hex(1100)},
+                        "0x" + format(1, "064x"), owners]
+            self.m._rpc_batch = batch
+            self.m.fetch_historical_block_candidate = lambda _proposal_end: 10
+            result = self.m.fetch_historical_safe_onchain("0x" + "1" * 40, 1050)
+            self.assertEqual(result["blockNumber"], 10)
+            self.assertEqual(self.m.MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS, 1)
+            self.assertEqual(calls, [url for _, url in self.m.ETHEREUM_RPC_PROVIDERS])
+        finally:
+            self.m._rpc_batch = original_batch
+            self.m.fetch_historical_block_candidate = original_candidate
+
+    def test_historical_block_candidate_is_single_bounded_fixed_source_lookup(self):
+        original_gl = self.m.gl
+        urls = []
+        class Response:
+            status = 200
+            headers = {"content-type": "application/json"}
+            body = json.dumps({"status": "1", "message": "OK", "result": {"blockNumber": "26134984"}})
+        try:
+            self.m.gl = types.SimpleNamespace(nondet=types.SimpleNamespace(web=types.SimpleNamespace(
+                get=lambda url: urls.append(url) or Response())))
+            self.assertEqual(self.m.fetch_historical_block_candidate(1791309600), 26134984)
+            self.assertEqual(urls, [self.m.BLOCKSCOUT_BLOCK_BY_TIME_API + "1791309600"])
+            self.assertEqual(self.m.MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS, 1)
+        finally:
+            self.m.gl = original_gl
+
+    def test_malformed_historical_block_candidate_falls_back_safely(self):
+        original_gl = self.m.gl
+        class Response:
+            status = 200
+            headers = {"content-type": "application/json"}
+            body = json.dumps({"status": "1", "result": {"blockNumber": "not-a-block"}})
+        try:
+            self.m.gl = types.SimpleNamespace(nondet=types.SimpleNamespace(web=types.SimpleNamespace(get=lambda _url: Response())))
+            with self.assertRaisesRegex(ValueError, "rpc_historical_state_unavailable"):
+                self.m.fetch_historical_block_candidate(1791309600)
+        finally:
+            self.m.gl = original_gl
+
+    def test_historical_provider_disagreement_fails_closed_for_history(self):
+        original_batch = self.m._rpc_batch
+        original_candidate = self.m.fetch_historical_block_candidate
+        try:
+            def batch(url, _calls):
+                owner = "0x" + "2" * 40
+                owners = "0x" + format(32, "064x") + format(1, "064x") + owner[2:].rjust(64, "0")
+                next_time = 1101 if "drpc" in url else 1100
+                return ["0x1", {"number": "0xa", "hash": "0x" + "a" * 64, "timestamp": hex(1000)},
+                        {"number": "0xb", "hash": "0x" + "b" * 64, "timestamp": hex(next_time)},
+                        "0x" + format(1, "064x"), owners]
+            self.m._rpc_batch = batch
+            self.m.fetch_historical_block_candidate = lambda _proposal_end: 10
+            with self.assertRaisesRegex(ValueError, "rpc_historical_boundary_disagreement"):
+                self.m.fetch_historical_safe_onchain("0x" + "1" * 40, 1050)
+        finally:
+            self.m._rpc_batch = original_batch
+            self.m.fetch_historical_block_candidate = original_candidate
+
+    def test_unavailable_archive_falls_back_to_current_state(self):
+        original_historical = self.m.fetch_historical_safe_onchain
+        original_current = self.m.fetch_safe_onchain
+        try:
+            self.m.fetch_historical_safe_onchain = lambda *_args: (_ for _ in ()).throw(ValueError("rpc_historical_state_unavailable"))
+            self.m.fetch_safe_onchain = lambda *_args: {"address": "0x" + "1" * 40, "chainId": 1,
+                "blockNumber": 20, "blockHash": "0x" + "a" * 64, "blockTimestamp": 2000,
+                "threshold": 1, "owners": ["0x" + "2" * 40], "providers": ["publicnode", "drpc"]}
+            safe, state, failure = self.m.fetch_safe_temporal("0x" + "1" * 40, "retrospective", 1000)
+            self.assertEqual(state, "retrieved")
+            self.assertEqual(failure, "rpc_historical_state_unavailable")
+            self.assertEqual(safe["temporalScope"], "current_state_observed")
+        finally:
+            self.m.fetch_historical_safe_onchain = original_historical
+            self.m.fetch_safe_onchain = original_current
+
+    def test_historical_provider_failures_normalize_before_current_state_fallback(self):
+        original_historical = self.m.fetch_historical_safe_onchain
+        original_current = self.m.fetch_safe_onchain
+        try:
+            self.m.fetch_historical_safe_onchain = lambda *_args: (_ for _ in ()).throw(
+                ValueError("rpc_historical_boundary_disagreement"))
+            self.m.fetch_safe_onchain = lambda *_args: {"address": "0x" + "1" * 40, "chainId": 1,
+                "blockNumber": 20, "blockHash": "0x" + "a" * 64, "blockTimestamp": 2000,
+                "threshold": 1, "owners": ["0x" + "2" * 40], "providers": ["publicnode", "drpc"]}
+            safe, state, failure = self.m.fetch_safe_temporal("0x" + "1" * 40, "retrospective", 1000)
+            self.assertEqual(state, "retrieved")
+            self.assertEqual(failure, "rpc_historical_state_unavailable")
+            self.assertEqual(safe["temporalScope"], "current_state_observed")
+        finally:
+            self.m.fetch_historical_safe_onchain = original_historical
+            self.m.fetch_safe_onchain = original_current
+
+    def test_unavailable_archive_and_current_state_are_nonfatal_unavailable(self):
+        original_historical = self.m.fetch_historical_safe_onchain
+        original_current = self.m.fetch_safe_onchain
+        try:
+            self.m.fetch_historical_safe_onchain = lambda *_args: (_ for _ in ()).throw(ValueError("rpc_historical_state_unavailable"))
+            self.m.fetch_safe_onchain = lambda *_args: (_ for _ in ()).throw(ValueError("rpc_publicnode_request_error"))
+            safe, state, failure = self.m.fetch_safe_temporal("0x" + "1" * 40, "retrospective", 1000)
+            self.assertIsNone(safe)
+            self.assertEqual(state, "unavailable")
+            self.assertEqual(failure, "rpc_historical_state_unavailable")
+        finally:
+            self.m.fetch_historical_safe_onchain = original_historical
+            self.m.fetch_safe_onchain = original_current
 
 
 if __name__ == "__main__":
