@@ -314,23 +314,6 @@ def fetch_proposal_context(source):
     return {"material": material, "proposalEnd": end}
 
 
-def iso_to_unix(value):
-    if not isinstance(value, str) or len(value) > 80:
-        raise ValueError("invalid assessment time")
-    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z", value)
-    if not match:
-        raise ValueError("invalid assessment time")
-    year, month, day, hour, minute, second = [int(part) for part in match.groups()]
-    if not 1970 <= year <= 2100 or not 1 <= month <= 12 or hour > 23 or minute > 59 or second > 59:
-        raise ValueError("invalid assessment time")
-    month_days = [31, 29 if is_leap_year(year) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    if not 1 <= day <= month_days[month - 1]:
-        raise ValueError("invalid assessment time")
-    days = sum(366 if is_leap_year(item) else 365 for item in range(1970, year))
-    days += sum(month_days[:month - 1]) + day - 1
-    return days * 86400 + hour * 3600 + minute * 60 + second
-
-
 def iso_from_unix(value):
     if type(value) is not int or value < 0 or value > 4102444800:
         raise ValueError("invalid Unix time")
@@ -355,8 +338,8 @@ def is_leap_year(year):
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 
-def assessment_context_for(proposal_end, assessed_at):
-    return "retrospective" if proposal_end <= iso_to_unix(assessed_at) else "live"
+def assessment_context_for(proposal_state):
+    return "retrospective" if proposal_state == "closed" else "live"
 
 
 def _rpc_call(provider_url, method, params, request_id):
@@ -1575,7 +1558,7 @@ class GovernanceDueDiligenceV33(gl.Contract):
         material = proposal_context["material"]
         proposal_end = proposal_context["proposalEnd"]
         assessed_at = gl.message_raw["datetime"]
-        assessment_context = assessment_context_for(proposal_end, assessed_at)
+        assessment_context = assessment_context_for(json.loads(material).get("state", ""))
         temporal_context = {"assessmentContext": assessment_context,
                             "proposalCloseTime": iso_from_unix(proposal_end),
                             "evidenceRetrievedAt": assessed_at}

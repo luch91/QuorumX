@@ -632,8 +632,8 @@ class DueDiligenceV33Test(unittest.TestCase):
             contract.assess(source, "run-1")
 
     def test_retrospective_current_safe_state_cannot_verify_historical_claim(self):
-        self.assertEqual(self.m.assessment_context_for(1700000000, "2026-10-06T00:00:00Z"), "retrospective")
-        self.assertEqual(self.m.assessment_context_for(1900000000, "2026-10-06T00:00:00Z"), "live")
+        self.assertEqual(self.m.assessment_context_for("closed"), "retrospective")
+        self.assertEqual(self.m.assessment_context_for("active"), "live")
         address = "0x" + "1" * 40
         material = self.m.canonical({"id": "p1", "space": "safe.eth", "title": "Safe state",
             "body": f"Safe address: {address} on Ethereum mainnet has a 2/2 threshold.",
