@@ -1,10 +1,12 @@
 jest.mock("../src/database", () => ({
+  advanceSnapshotReconciliation: jest.fn(),
   claimAssessmentJob: jest.fn(),
   deferSubmittedPoll: jest.fn(),
   finalizeAssessment: jest.fn(),
+  getSnapshotScanState: jest.fn(),
   ingestSnapshotProposals: jest.fn(),
   isSourcePollDue: jest.fn().mockResolvedValue(true),
-  sourcePollOffset: jest.fn().mockResolvedValue(0),
+  listOpenSnapshotProposalIds: jest.fn(),
   listSubmittedJobs: jest.fn(),
   markJobRetry: jest.fn(),
   markSubmittedTerminal: jest.fn(),
@@ -20,19 +22,24 @@ jest.mock("../src/genlayer", () => ({
   getTransactionState: jest.fn(),
   readAssessment: jest.fn(),
   readDueDiligence: jest.fn(),
+  readDueDiligenceV3: jest.fn(),
   submitAssessment: jest.fn(),
   submitDueDiligence: jest.fn(),
+  submitDueDiligenceV3: jest.fn(),
 }));
-jest.mock("../src/snapshot", () => ({ fetchRecentSnapshotProposals: jest.fn() }));
+jest.mock("../src/snapshot", () => ({ fetchOpenSnapshotProposalPage: jest.fn(), fetchSnapshotProposalsByIds: jest.fn() }));
 
 import {
+  advanceSnapshotReconciliation,
   claimAssessmentJob,
   deferSubmittedPoll,
   finalizeAssessment,
+  getSnapshotScanState,
   ingestSnapshotProposals,
   isSourcePollDue,
-  sourcePollOffset,
+  listOpenSnapshotProposalIds,
   listSubmittedJobs,
+  recordSourceFailure,
   recordSubmittedTransaction,
   quarantineSubmittedAssessment,
   prepareSubmissionIntent,
@@ -40,9 +47,10 @@ import {
 } from "../src/database";
 import { DueDiligenceBoundaryError } from "../src/due_diligence";
 import { runIndexerCycle } from "../src/cycle";
-import { findSubmittedTransaction, getTransactionState, readAssessment, readDueDiligence, submitAssessment, submitDueDiligence } from "../src/genlayer";
-import { fetchRecentSnapshotProposals } from "../src/snapshot";
-import type { StoredAssessment, StoredDueDiligenceAssessment } from "../src/domain";
+import { findSubmittedTransaction, getTransactionState, readAssessment, readDueDiligence, readDueDiligenceV3, submitAssessment, submitDueDiligence } from "../src/genlayer";
+import { fetchOpenSnapshotProposalPage, fetchSnapshotProposalsByIds } from "../src/snapshot";
+import type { StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "../src/domain";
+import { contractCanonicalJson, sha256 } from "../src/canonical";
 
 const assessment: StoredAssessment = {
   proposalKey: "snapshot:balancer.eth:p1",
@@ -56,6 +64,10 @@ const assessment: StoredAssessment = {
   assessedAt: "2026-09-29T00:00:00Z",
   provenance: "live",
 };
+
+beforeAll(async () => {
+  assessment.sourceLocatorHash = await sha256(contractCanonicalJson(job.source));
+});
 
 const job = {
   id: "1",
@@ -83,7 +95,11 @@ describe("indexer cycle", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(listSubmittedJobs).mockResolvedValue([]);
-    jest.mocked(fetchRecentSnapshotProposals).mockResolvedValue([]);
+    jest.mocked(recordSourceFailure).mockResolvedValue();
+    jest.mocked(getSnapshotScanState).mockResolvedValue({ generation: 1, skip: 0, newProposalCount: 0, stableSweepCount: 0, sweepFingerprint: "", coverage: "scanning", reconciliationOffset: 0 });
+    jest.mocked(fetchOpenSnapshotProposalPage).mockResolvedValue({ proposals: [], first: 20, skip: 0, exhausted: true });
+    jest.mocked(listOpenSnapshotProposalIds).mockResolvedValue([]);
+    jest.mocked(fetchSnapshotProposalsByIds).mockResolvedValue([]);
     jest.mocked(ingestSnapshotProposals).mockResolvedValue({ proposalsSeen: 0, revisionsCreated: 0, jobsCreated: 0 });
     jest.mocked(claimAssessmentJob).mockResolvedValue(undefined);
   });
@@ -98,6 +114,29 @@ describe("indexer cycle", () => {
     }));
     expect(submitAssessment).not.toHaveBeenCalled();
     expect(result.jobsProcessed).toBe(1);
+  });
+
+  it("checks the newest page while resuming an older page so new proposals meet the freshness target", async () => {
+    jest.mocked(getSnapshotScanState).mockResolvedValue({ generation: 1, skip: 50, newProposalCount: 50, stableSweepCount: 0, sweepFingerprint: "page-1", coverage: "scanning", reconciliationOffset: 0 });
+    const open = { externalId: "new", canonicalId: "snapshot:balancer.eth:new", source: { kind: "snapshot" as const, space: "balancer.eth", proposalId: "new" },
+      authorAddress: "0x1111111111111111111111111111111111111111" as const, canonicalUrl: "https://snapshot.box/new", title: "New", bodyText: "Body", choices: [], linkedEvidenceUrls: [], status: "active" as const, assessmentEligible: true };
+    jest.mocked(fetchOpenSnapshotProposalPage)
+      .mockResolvedValueOnce({ proposals: [], first: 50, skip: 50, exhausted: true })
+      .mockResolvedValueOnce({ proposals: [open], first: 50, skip: 0, exhausted: true });
+    await runIndexerCycle({ ...settings, snapshotLimit: 50, enableWrites: false });
+    expect(fetchOpenSnapshotProposalPage).toHaveBeenNthCalledWith(1, "balancer.eth", 50, expect.anything(), 50);
+    expect(fetchOpenSnapshotProposalPage).toHaveBeenNthCalledWith(2, "balancer.eth", 0, expect.anything(), 50);
+    expect(ingestSnapshotProposals).toHaveBeenCalledWith(expect.anything(), expect.anything(), [open], expect.any(Date), "1", "1",
+      { skip: 50, first: 50, exhausted: true, pageIds: [] });
+  });
+
+  it("does not commit progress when a resumed Snapshot page fails", async () => {
+    jest.mocked(getSnapshotScanState).mockResolvedValue({ generation: 2, skip: 50, newProposalCount: 50, stableSweepCount: 0, sweepFingerprint: "page-1", coverage: "scanning", reconciliationOffset: 0 });
+    jest.mocked(fetchOpenSnapshotProposalPage).mockRejectedValueOnce(new Error("middle page failed"));
+    const result = await runIndexerCycle({ ...settings, enableWrites: false });
+    expect(result.errors).toContain("snapshot:balancer.eth: middle page failed");
+    expect(ingestSnapshotProposals).not.toHaveBeenCalled();
+    expect(advanceSnapshotReconciliation).not.toHaveBeenCalled();
   });
 
   it("submits a changed revision instead of accepting stale contract state", async () => {
@@ -183,25 +222,16 @@ describe("indexer cycle", () => {
 
   it("claims only jobs for the enabled assessment version", async () => {
     await runIndexerCycle(settings);
-    expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "1");
+    expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "1", "1");
     await runIndexerCycle({ ...settings, assessmentVersion: "2" });
-    expect(claimAssessmentJob).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), "2");
+    expect(claimAssessmentJob).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), "2", "2");
   });
 
   it("skips a source while its persisted failure backoff is active", async () => {
     jest.mocked(isSourcePollDue).mockResolvedValueOnce(false);
     const result = await runIndexerCycle({ ...settings, enableWrites: false });
-    expect(fetchRecentSnapshotProposals).not.toHaveBeenCalled();
+    expect(fetchOpenSnapshotProposalPage).not.toHaveBeenCalled();
     expect(result.sourcesPolled).toBe(0);
-  });
-
-  it("advances the persisted page offset when a full Snapshot page is returned", async () => {
-    jest.mocked(sourcePollOffset).mockResolvedValueOnce(40);
-    jest.mocked(fetchRecentSnapshotProposals).mockResolvedValueOnce(Array.from({ length: 20 }, () => ({} as never)));
-    await runIndexerCycle({ ...settings, enableWrites: false });
-    expect(fetchRecentSnapshotProposals).toHaveBeenCalledWith("balancer.eth", expect.any(Function), 20, 15_000, 40);
-    expect(ingestSnapshotProposals).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(),
-      expect.any(Date), "1", 60);
   });
 
   it("reads the exact accepted v2 revision before finalizing", async () => {
@@ -217,7 +247,7 @@ describe("indexer cycle", () => {
       genlayer: { ...settings.genlayer, dueDiligenceContractAddress: "0x3333333333333333333333333333333333333333" } });
     expect(readDueDiligence).toHaveBeenCalledWith(expect.objectContaining({
       dueDiligenceContractAddress: "0x3333333333333333333333333333333333333333",
-    }), assessment.proposalKey, expectedHash);
+    }), assessment.proposalKey, expectedHash, undefined);
     expect(finalizeAssessment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ transactionRowId: "3" }));
   });
 
@@ -245,6 +275,25 @@ describe("indexer cycle", () => {
       genlayer: { ...settings.genlayer, dueDiligenceContractAddress: "0x3333333333333333333333333333333333333333" } });
     expect(quarantineSubmittedAssessment).toHaveBeenCalledWith(expect.anything(), submitted, "invalid_v2_contract_record");
     expect(result.errors).toEqual([`transaction ${submitted.transactionId}: invalid_v2_contract_record`]);
+  });
+
+  it("recovers an in-flight v3 transaction through its stored historical contract address", async () => {
+    const historical = "0x4444444444444444444444444444444444444444" as const;
+    jest.mocked(listSubmittedJobs).mockResolvedValue([{
+      jobId: "9", attemptCount: 1, maxAttempts: 20, revisionId: "2", proposalKey: assessment.proposalKey,
+      transactionId: `0x${"9".repeat(64)}`, transactionRowId: "8", assessmentVersion: "3",
+      assessmentSchemaVersion: "3.2", assessmentRunId: "legacy-run", contractAddress: historical,
+      expectedContractContentHash: assessment.contentHash,
+    }]);
+    jest.mocked(getTransactionState).mockResolvedValue({ state: "accepted" });
+    jest.mocked(readDueDiligenceV3).mockResolvedValue({ ...assessment, assessmentVersion: "3",
+      assessmentSchemaVersion: "3.2" } as unknown as StoredDueDiligenceV3Assessment);
+    await runIndexerCycle({ ...settings, enableWrites: false });
+    expect(readDueDiligenceV3).toHaveBeenCalledWith(settings.genlayer, assessment.proposalKey,
+      assessment.contentHash, historical, undefined);
+    expect(finalizeAssessment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      assessmentRunId: "legacy-run", assessmentSchemaVersion: "3.2",
+    }));
   });
 
   it("does not finalize a transaction against the wrong source revision", async () => {

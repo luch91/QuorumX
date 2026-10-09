@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "outDir": "dist"
   },
-  "include": ["dwcs/src", "app/src", "dwcs/tests", "app/tests"]
+  "include": ["app/src", "app/tests"]
 }

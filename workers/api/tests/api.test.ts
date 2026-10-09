@@ -1,4 +1,16 @@
-import { listProposals } from "../src/api";
+import { getDueDiligenceV3, listProposals, listSources } from "../src/api";
+
+describe("source coverage API", () => {
+  it("exposes fixed-point scan progress and durable assessment backlog", async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    await listSources(client as never);
+    const sql = client.query.mock.calls[0][0];
+    expect(sql).toContain("coverageState");
+    expect(sql).toContain("scanGeneration");
+    expect(sql).toContain("backlogCount");
+    expect(sql).toContain("oldestBacklogAt");
+  });
+});
 
 describe("proposal API filters", () => {
   it("normalizes and binds DAO, author, assessment, and ecosystem filters", async () => {
@@ -37,6 +49,16 @@ describe("proposal API filters", () => {
       .rejects.toThrow(error);
   });
 
+  it.each(["unassessed", "pending", "retryable", "failed", "dead_letter"])(
+    "preserves the legacy assessment=%s filter",
+    async (assessment) => {
+      const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+      await expect(listProposals(client as never,
+        new URL(`https://api.quorumx.dev/v1/proposals?assessment=${assessment}`))).resolves.toBeDefined();
+      expect(client.query.mock.calls[0][1][6]).toBe(assessment);
+    },
+  );
+
   it("binds full-dataset search and global priority ordering", async () => {
     const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     const result = await listProposals(client as never,
@@ -57,5 +79,16 @@ describe("proposal API filters", () => {
     await expect(listProposals({} as never, new URL(
       `https://api.quorumx.dev/v1/proposals?status=closed&sort=priority&limit=1&cursor=${first.page.nextCursor}`,
     ))).rejects.toThrow("invalid_cursor");
+  });
+});
+
+describe("versioned due diligence reads", () => {
+  it("defaults to the newest schema and binds an explicit historical selector", async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    await getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "3.2");
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining("assessment_schema_version desc"),
+      ["snapshot:safe.eth:p1", "3.2"]);
+    await expect(getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "latest"))
+      .rejects.toThrow("invalid_assessment_schema");
   });
 });

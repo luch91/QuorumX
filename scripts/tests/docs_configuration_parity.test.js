@@ -12,9 +12,9 @@ describe("documentation and configuration parity", () => {
     const env = read(".env.example");
     expect(pkg.version).toBe("0.4.0");
     expect(worker).toContain('SERVICE_VERSION = "0.4.0"');
-    expect(config).toContain('"QUORUMX_ASSESSMENT_VERSION": "2"');
+    expect(config).toContain('"QUORUMX_ASSESSMENT_VERSION": "3"');
     expect(config).toContain('"QUORUMX_ENABLE_WRITES": "true"');
-    expect(env).toContain("QUORUMX_ASSESSMENT_VERSION=2");
+    expect(env).toContain("QUORUMX_ASSESSMENT_VERSION=3");
     expect(read("database/README.md")).toContain("0010_runtime_privilege_matrix.sql");
   });
 

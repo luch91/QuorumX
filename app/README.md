@@ -21,4 +21,4 @@ requires a key only immediately before a new submission.
 
 Snapshot discovery uses GraphQL GET. The assessment workflow checks stored state before submission, writes `submitted` evidence before waiting, and can resume from a recorded transaction ID without resubmitting. Accepted consensus is surfaced as accepted only when the matching assessment is readable from contract state.
 
-Archived fixtures require `QUORUMX_ALLOW_FIXTURES=true` and remain labelled `fixture`. GenLayer failures do not trigger Telegraph payments. The old paid workflow is isolated behind `npm run legacy:telegraph`; its budget and explicit authorization controls remain in force.
+Archived fixtures require `QUORUMX_ALLOW_FIXTURES=true` and remain labelled `fixture`. They are never enabled implicitly in production paths.

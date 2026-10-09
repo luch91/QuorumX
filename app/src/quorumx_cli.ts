@@ -10,10 +10,8 @@ import type { AssessmentWorkflowResult } from "./workflows/genlayer_assessment";
 import { runGenLayerAssessment } from "./workflows/genlayer_assessment";
 import type { GenLayerGateway } from "./genlayer/gateway";
 import type { ProposalSourceAdapter } from "./ingest/proposal_source";
-import { runLegacyTelegraphCycle } from "./workflows/telegraph_legacy";
 import { presentSourceAttempts } from "./cli/commands/sources_check";
 import { presentProposals } from "./cli/commands/proposals_list";
-import { LEGACY_WARNING } from "./cli/commands/legacy_telegraph";
 import { parseSnapshotReference } from "./cli/proposal_reference";
 
 export interface QuorumXCliDependencies {
@@ -21,7 +19,6 @@ export interface QuorumXCliDependencies {
   listProposals(): Promise<GovernanceProposal[]>;
   assess(options: { source?: string; proposal?: string }): Promise<AssessmentWorkflowResult>;
   getAssessment(proposalKey: string): Promise<GovernanceRiskAssessment | undefined>;
-  runLegacy(): Promise<void>;
 }
 
 const HELP = `QuorumX — validator consensus for governance risk
@@ -29,8 +26,7 @@ const HELP = `QuorumX — validator consensus for governance risk
 quorumx sources check [--json]
 quorumx proposals list [--json]
 quorumx assess --source <source> --proposal <id-or-url> [--json]
-quorumx assessment get <proposal-key> [--json]
-quorumx legacy telegraph`;
+quorumx assessment get <proposal-key> [--json]`;
 
 function option(args: string[], name: string): string | undefined { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; }
 
@@ -57,7 +53,6 @@ export async function runQuorumXCli(
     return result.transaction.state === "accepted" ? 0 : result.transaction.state === "undetermined" ? 3 : 4;
   }
   if (args[0] === "assessment" && args[1] === "get" && args[2]) { const result = await deps.getAssessment(args[2]); emit(result ?? { found: false }); return result ? 0 : 2; }
-  if (args[0] === "legacy" && args[1] === "telegraph") { emit(LEGACY_WARNING); await deps.runLegacy(); return 0; }
   emit(HELP); return 4;
 }
 
@@ -94,6 +89,5 @@ export function createDefaultCliDependencies(env: NodeJS.ProcessEnv = process.en
       return assessWorkflow({}, { source: selectedSource, gateway: guardedGateway, evidence: new JsonlTransactionEvidenceStore(".quorumx-evidence/transactions.jsonl") });
     },
     getAssessment: async (key) => (await gateway(loadGenLayerReadConfig(env))).getAssessment(key),
-    runLegacy: runLegacyTelegraphCycle,
   };
 }

@@ -1,0 +1,8 @@
+{
+  "id": "governance-safeguards-1",
+  "space": "safe.eth",
+  "title": "Governance threshold update",
+  "body": "Change the governance quorum to 10 percent and voting threshold to 55 percent. The rule can be reversed by a later governance vote.",
+  "choices": ["For", "Against"],
+  "state": "active"
+}

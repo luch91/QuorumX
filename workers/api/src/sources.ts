@@ -58,6 +58,14 @@ const bySpace = new Map<string, SnapshotSourceDefinition>(
 
 export const snapshotSourceDefinitions: readonly SnapshotSourceDefinition[] = definitions;
 
+const requiredCoverageSpaces = ["safe.eth", "arbitrumfoundation.eth", "ens.eth"] as const;
+
+export function validateMultiDaoCoverage(spaces: string[]): void {
+  const configured = new Set(spaces.map((space) => space.trim().toLowerCase()));
+  const missing = requiredCoverageSpaces.filter((space) => !configured.has(space));
+  if (missing.length > 0) throw new Error(`Snapshot coverage is missing required spaces: ${missing.join(", ")}`);
+}
+
 export function snapshotSourceForSpace(space: string): SnapshotSourceDefinition {
   const normalized = space.trim().toLowerCase();
   const definition = bySpace.get(normalized);

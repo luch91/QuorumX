@@ -1,0 +1,8 @@
+{
+  "id": "treasury-safeguards-1",
+  "space": "safe.eth",
+  "title": "Treasury allocation",
+  "body": "Transfer 5M ARB to 0x1111111111111111111111111111111111111111. A 3/5 multisig controls custody. No clawback will apply.",
+  "choices": ["For", "Against"],
+  "state": "active"
+}
