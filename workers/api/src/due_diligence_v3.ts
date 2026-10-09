@@ -12,7 +12,7 @@ const SAFE_RPC_PROVIDERS = {
 } as const;
 const STATES = new Set(["supported", "partially_supported", "unverified", "contradicted", "not_applicable"]);
 const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
-const SAFE_FAILURE_CODE = /^(?:rpc_(?:publicnode|drpc)_(?:request_error|invalid_http_status|http_[1-5][0-9]{2}|invalid_body|response_too_large|invalid_json|invalid_envelope|remote_error)|rpc_(?:not_mainnet|no_finalized_block|invalid_block_pin|invalid_block_hash|block_disagreement|safe_call_disagreement|safe_threshold_invalid|safe_owners_invalid|safe_threshold_exceeds_owners|invalid_safe_address|adapter_error|invalid_historical_time|historical_boundary_disagreement|historical_state_unavailable|historical_time_not_finalized|historical_lookup_limit))$/;
+const SAFE_FAILURE_CODE = /^(?:rpc_(?:publicnode|drpc)_(?:request_error|invalid_http_status|http_[1-5][0-9]{2}|invalid_body|response_too_large|invalid_json|invalid_envelope|remote_error|batch_http_error|invalid_batch)|rpc_(?:not_mainnet|no_finalized_block|invalid_block_pin|invalid_block_hash|block_disagreement|safe_call_disagreement|safe_threshold_invalid|safe_owners_invalid|safe_threshold_exceeds_owners|invalid_safe_address|invalid_batch|adapter_error|invalid_historical_time|historical_boundary_disagreement|historical_state_unavailable|historical_time_not_finalized|historical_lookup_limit))$/;
 const TEMPORAL_SCOPES = new Set(["historically_anchored", "current_state_observed", "inherently_historical", "unknown"]);
 function iso(value: unknown, field: string, optional = false): string {
   const result = str(value, field, 80, optional);

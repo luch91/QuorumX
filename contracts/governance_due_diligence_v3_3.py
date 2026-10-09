@@ -400,6 +400,39 @@ def _rpc_call(provider_url, method, params, request_id):
     return result["result"]
 
 
+def _rpc_batch(provider_url, calls):
+    """Execute one bounded read-only JSON-RPC batch against a fixed provider."""
+    provider_name = next((name for name, url in ETHEREUM_RPC_PROVIDERS if url == provider_url), "unknown")
+    if not isinstance(calls, list) or not 1 <= len(calls) <= 5:
+        raise ValueError("rpc_invalid_batch")
+    payload = [{"jsonrpc": "2.0", "method": method, "params": params, "id": index + 1}
+               for index, (method, params) in enumerate(calls)]
+    try:
+        response = gl.nondet.web.request(provider_url, method="POST", body=canonical(payload),
+                                          headers={"content-type": "application/json"})
+    except Exception:
+        raise ValueError("rpc_" + provider_name + "_request_error") from None
+    if getattr(response, "status", getattr(response, "status_code", None)) != 200:
+        raise ValueError("rpc_" + provider_name + "_batch_http_error")
+    try:
+        body = response.body.decode("utf-8") if isinstance(response.body, bytes) else str(response.body)
+        parsed = json.loads(body)
+    except Exception:
+        raise ValueError("rpc_" + provider_name + "_invalid_json") from None
+    if len(body.encode("utf-8")) > 64000 or not isinstance(parsed, list) or len(parsed) != len(payload):
+        raise ValueError("rpc_" + provider_name + "_invalid_batch")
+    by_id = {item.get("id"): item for item in parsed if isinstance(item, dict)}
+    if len(by_id) != len(payload):
+        raise ValueError("rpc_" + provider_name + "_invalid_batch")
+    results = []
+    for item in payload:
+        response_item = by_id.get(item["id"])
+        if not response_item or response_item.get("jsonrpc") != "2.0" or "result" not in response_item or "error" in response_item:
+            raise ValueError("rpc_" + provider_name + "_invalid_batch")
+        results.append(response_item["result"])
+    return results
+
+
 def _decode_safe_threshold(value):
     if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", value):
         raise ValueError("invalid Safe threshold ABI result")
@@ -525,30 +558,48 @@ def fetch_historical_safe_onchain(address, proposal_end, block_pin=None):
     """Discover one candidate, then make both RPCs verify its boundary and Safe state."""
     if type(proposal_end) is not int or proposal_end < 1:
         raise ValueError("rpc_invalid_historical_time")
-    if block_pin is not None:
-        safe = fetch_safe_onchain(address, block_pin)
-    else:
-        block_number = fetch_historical_block_candidate(proposal_end)
-        primary_url = ETHEREUM_RPC_PROVIDERS[0][1]
-        candidate_block = _rpc_call(primary_url, "eth_getBlockByNumber", ["0x" + format(block_number, "x"), False], 20)
-        if not isinstance(candidate_block, dict):
-            raise ValueError("rpc_historical_state_unavailable")
-        candidate = {"blockNumber": block_number, "blockHash": str(candidate_block.get("hash", "")).lower()}
-        safe = fetch_safe_onchain(address, candidate)
-    if safe["blockTimestamp"] is None or safe["blockTimestamp"] > proposal_end:
+    block_number = fetch_historical_block_candidate(proposal_end)
+    if block_pin is not None and block_pin.get("blockNumber") != block_number:
         raise ValueError("rpc_historical_boundary_disagreement")
-    next_tag = "0x" + format(safe["blockNumber"] + 1, "x")
-    next_values = []
+    block_tag = "0x" + format(block_number, "x")
+    next_tag = "0x" + format(block_number + 1, "x")
+    threshold_request = {"to": address, "data": "0xe75235b8"}
+    owners_request = {"to": address, "data": "0xa0e67e2b"}
+    provider_results = []
     for _, provider_url in ETHEREUM_RPC_PROVIDERS:
-        block = _rpc_call(provider_url, "eth_getBlockByNumber", [next_tag, False], 60)
-        if not isinstance(block, dict):
+        values = _rpc_batch(provider_url, [
+            ("eth_chainId", []),
+            ("eth_getBlockByNumber", [block_tag, False]),
+            ("eth_getBlockByNumber", [next_tag, False]),
+            ("eth_call", [threshold_request, block_tag]),
+            ("eth_call", [owners_request, block_tag]),
+        ])
+        if values[0] != "0x1" or not isinstance(values[1], dict) or not isinstance(values[2], dict):
             raise ValueError("rpc_historical_state_unavailable")
-        next_values.append((_hex_quantity(block.get("number"), "block number"),
-                            str(block.get("hash", "")).lower(),
-                            _hex_quantity(block.get("timestamp"), "block timestamp")))
-    if next_values[0] != next_values[1] or next_values[0][2] <= proposal_end:
+        provider_results.append({
+            "blockNumber": _hex_quantity(values[1].get("number"), "block number"),
+            "blockHash": str(values[1].get("hash", "")).lower(),
+            "blockTimestamp": _hex_quantity(values[1].get("timestamp"), "block timestamp"),
+            "nextNumber": _hex_quantity(values[2].get("number"), "block number"),
+            "nextHash": str(values[2].get("hash", "")).lower(),
+            "nextTimestamp": _hex_quantity(values[2].get("timestamp"), "block timestamp"),
+            "threshold": _decode_safe_threshold(values[3]), "owners": _decode_safe_owners(values[4]),
+        })
+    if canonical(provider_results[0]) != canonical(provider_results[1]) \
+            or provider_results[0]["blockNumber"] != block_number \
+            or provider_results[0]["nextNumber"] != block_number + 1 \
+            or provider_results[0]["blockTimestamp"] > proposal_end \
+            or provider_results[0]["nextTimestamp"] <= proposal_end:
         raise ValueError("rpc_historical_boundary_disagreement")
-    return safe
+    agreed = provider_results[0]
+    if block_pin is not None and str(block_pin.get("blockHash", "")).lower() != agreed["blockHash"]:
+        raise ValueError("rpc_block_disagreement")
+    if agreed["threshold"] > len(agreed["owners"]):
+        raise ValueError("rpc_safe_threshold_exceeds_owners")
+    return {"address": address.lower(), "chainId": 1, "blockNumber": block_number,
+            "blockHash": agreed["blockHash"], "blockTimestamp": agreed["blockTimestamp"],
+            "threshold": agreed["threshold"], "owners": agreed["owners"],
+            "providers": [name for name, _ in ETHEREUM_RPC_PROVIDERS]}
 
 
 def fetch_safe_temporal(address, assessment_context, proposal_end, block_pin=None, temporal_scope_pin=None):

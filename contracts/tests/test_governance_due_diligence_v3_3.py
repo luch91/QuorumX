@@ -660,28 +660,25 @@ class DueDiligenceV33Test(unittest.TestCase):
         self.assertEqual(claim["status"], "supported")
 
     def test_historical_lookup_is_bounded_and_dual_provider_confirmed(self):
-        original_rpc = self.m._rpc_call
-        original_safe = self.m.fetch_safe_onchain
+        original_batch = self.m._rpc_batch
         original_candidate = self.m.fetch_historical_block_candidate
         calls = []
         try:
-            def rpc(url, method, params, request_id):
-                calls.append((url, params[0]))
-                number = 16 if params[0] == "finalized" else int(params[0], 16)
-                timestamp = number * 100
-                return {"number": hex(number), "hash": "0x" + format(number, "064x"), "timestamp": hex(timestamp)}
-            self.m._rpc_call = rpc
+            def batch(url, _calls):
+                calls.append(url)
+                owner = "0x" + "2" * 40
+                owners = "0x" + format(32, "064x") + format(1, "064x") + owner[2:].rjust(64, "0")
+                return ["0x1", {"number": "0xa", "hash": "0x" + "a" * 64, "timestamp": hex(1000)},
+                        {"number": "0xb", "hash": "0x" + "b" * 64, "timestamp": hex(1100)},
+                        "0x" + format(1, "064x"), owners]
+            self.m._rpc_batch = batch
             self.m.fetch_historical_block_candidate = lambda _proposal_end: 10
-            self.m.fetch_safe_onchain = lambda _address, pin: {"address": "0x" + "1" * 40, "chainId": 1,
-                "blockNumber": pin["blockNumber"], "blockHash": pin["blockHash"], "blockTimestamp": pin["blockNumber"] * 100,
-                "threshold": 1, "owners": ["0x" + "2" * 40], "providers": ["publicnode", "drpc"]}
             result = self.m.fetch_historical_safe_onchain("0x" + "1" * 40, 1050)
             self.assertEqual(result["blockNumber"], 10)
             self.assertEqual(self.m.MAX_HISTORICAL_BLOCK_LOOKUP_ATTEMPTS, 1)
-            self.assertEqual([url for url, tag in calls[-2:] if tag == "0xb"], [url for _, url in self.m.ETHEREUM_RPC_PROVIDERS])
+            self.assertEqual(calls, [url for _, url in self.m.ETHEREUM_RPC_PROVIDERS])
         finally:
-            self.m._rpc_call = original_rpc
-            self.m.fetch_safe_onchain = original_safe
+            self.m._rpc_batch = original_batch
             self.m.fetch_historical_block_candidate = original_candidate
 
     def test_historical_block_candidate_is_single_bounded_fixed_source_lookup(self):
@@ -714,24 +711,22 @@ class DueDiligenceV33Test(unittest.TestCase):
             self.m.gl = original_gl
 
     def test_historical_provider_disagreement_fails_closed_for_history(self):
-        original_rpc = self.m._rpc_call
-        original_safe = self.m.fetch_safe_onchain
+        original_batch = self.m._rpc_batch
         original_candidate = self.m.fetch_historical_block_candidate
         try:
-            def rpc(url, method, params, request_id):
-                number = 16 if params[0] == "finalized" else int(params[0], 16)
-                timestamp = number * 100 + (1 if params[0] == "0xb" and "drpc" in url else 0)
-                return {"number": hex(number), "hash": "0x" + format(number, "064x"), "timestamp": hex(timestamp)}
-            self.m._rpc_call = rpc
+            def batch(url, _calls):
+                owner = "0x" + "2" * 40
+                owners = "0x" + format(32, "064x") + format(1, "064x") + owner[2:].rjust(64, "0")
+                next_time = 1101 if "drpc" in url else 1100
+                return ["0x1", {"number": "0xa", "hash": "0x" + "a" * 64, "timestamp": hex(1000)},
+                        {"number": "0xb", "hash": "0x" + "b" * 64, "timestamp": hex(next_time)},
+                        "0x" + format(1, "064x"), owners]
+            self.m._rpc_batch = batch
             self.m.fetch_historical_block_candidate = lambda _proposal_end: 10
-            self.m.fetch_safe_onchain = lambda _address, pin: {"address": "0x" + "1" * 40, "chainId": 1,
-                "blockNumber": pin["blockNumber"], "blockHash": pin["blockHash"], "blockTimestamp": pin["blockNumber"] * 100,
-                "threshold": 1, "owners": ["0x" + "2" * 40], "providers": ["publicnode", "drpc"]}
             with self.assertRaisesRegex(ValueError, "rpc_historical_boundary_disagreement"):
                 self.m.fetch_historical_safe_onchain("0x" + "1" * 40, 1050)
         finally:
-            self.m._rpc_call = original_rpc
-            self.m.fetch_safe_onchain = original_safe
+            self.m._rpc_batch = original_batch
             self.m.fetch_historical_block_candidate = original_candidate
 
     def test_unavailable_archive_falls_back_to_current_state(self):
