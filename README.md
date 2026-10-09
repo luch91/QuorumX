@@ -1,5 +1,7 @@
 # QuorumX
 
+[![CI](https://github.com/luch91/QuorumX/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/luch91/QuorumX/actions/workflows/ci.yml) [![Living Index](https://img.shields.io/badge/Living_Index-quorumx.dev-D4AF37)](https://quorumx.dev/) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![Contributing](https://img.shields.io/badge/Contributing-guide-2ea44f)](CONTRIBUTING.md) [![Security](https://img.shields.io/badge/Security-policy-8b5cf6)](SECURITY.md) [![Built on GenLayer](https://img.shields.io/badge/Built_on-GenLayer-f4b942)](https://genlayer.com/) [![GitHub stars](https://img.shields.io/github/stars/luch91/QuorumX?style=flat)](https://github.com/luch91/QuorumX/stargazers)
+
 QuorumX is a public, multi-DAO governance due-diligence index. It discovers
 Snapshot proposal revisions, submits bounded analysis to GenLayer, persists
 accepted assessments immutably, and exposes them through an API and Living
