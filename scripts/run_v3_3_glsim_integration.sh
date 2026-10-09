@@ -3,6 +3,16 @@ set -eu
 
 PIP_DEFAULT_TIMEOUT=120 python -m pip install -q --retries 3 'genlayer-test[sim]==0.29.2' 'numpy<3'
 
+# genlayer-test 0.29.2 discovers the latest GenVM release when its cache is
+# empty, but newer releases no longer publish the genvm-universal.tar.xz asset
+# that this loader expects. Cache the release containing the contract's pinned
+# runner so every validator resolves the same reproducible SDK bundle.
+python - <<'PY'
+from gltest.direct.sdk_loader import download_artifacts
+
+download_artifacts("v0.2.16")
+PY
+
 glsim --port 4012 --host 0.0.0.0 --validators 5 --no-browser --seed 35 >/tmp/quorumx-glsim.log 2>&1 &
 glsim_pid=$!
 cleanup() {
