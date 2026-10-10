@@ -441,7 +441,40 @@ describe("QuorumX frontend helpers", () => {
       reviewPriority: "low", reviewPriorityExplanation: "Review." });
     expect(html).toContain("Retrospective review");
     expect(html).toContain("Safe state observed during assessment; not proof of configuration at proposal close.");
-    expect(html).toContain("Current State Observed");
+    expect(html).toContain("Current observation during retrospective review");
     expect(html).not.toContain("<script>");
+  });
+
+  test("distinguishes evidence outcomes and makes execution, priority, and questions decision-ready", () => {
+    const html = renderDueDiligence({ assessmentVersion: "3", assessmentSchemaVersion: "3.3",
+      assessmentContext: "retrospective", proposalCloseTime: "2026-09-01T00:00:00Z", evidenceRetrievedAt: "2026-10-04T00:00:00Z",
+      overview: { purpose: "Allocate ARB", requestedActions: ["Transfer ARB"], assetsAffected: ["ARB"], permissionsChanged: [], controlChanges: [] },
+      evidence: [
+        { id: "proposal", type: "proposal", locator: "https://snapshot.org/p1", description: "Snapshot proposal", contentHash: "a".repeat(64), verificationScope: "validator_retrieved_proposal", authority: "primary", temporal: { temporalScope: "unknown", retrievedAt: "2026-10-04T00:00:00Z" } },
+        { id: "safe", type: "safe_onchain", locator: "https://ethereum-rpc.publicnode.com", description: "Safe state", contentHash: "b".repeat(64), verificationScope: "validator_retrieved_external_source", authority: "secondary", temporal: { temporalScope: "historically_anchored", historicallyAnchored: true, blockNumber: 20000000, blockHash: "0x" + "1".repeat(64) } },
+      ],
+      materialClaims: [
+        { id: "c1", claim: "The proposal states 200k users", sourceExcerpt: "200k users", claimScope: "proposal_action", proposalAssertion: true, status: "not_applicable", explanation: "The statement appears in the proposal.", evidence: ["proposal"], confidence: "high" },
+        { id: "c2", claim: "Safe has 3 signers", sourceExcerpt: "3 signers", claimScope: "external_factual", status: "partially_supported", explanation: "Reviewed state confirms two of three signers.", evidence: ["safe"], confidence: "medium" },
+        { id: "c3", claim: "No recovery needed", sourceExcerpt: "No recovery", claimScope: "external_factual", status: "contradicted", explanation: "Recovery path is still required.", evidence: ["proposal"], confidence: "high" },
+      ],
+      safeguardGaps: [{ id: "sg1", safeguard: "Clawback", state: "not_identified", scope: "reviewed proposal", evidence: ["proposal"], relatedExecutionStepIds: ["s1"] }, { id: "sg2", safeguard: "Refund", state: "explicitly_absent", scope: "proposal", evidence: ["proposal"], relatedExecutionStepIds: ["s1"] }],
+      findings: [{ id: "f1", title: "Treasury control moves", observation: "Funds transfer to a Safe", whyItMatters: "DAO custody changes.", impact: "DAO control no longer applies directly.", severity: "high", confidence: "high", evidence: ["proposal"], existingSafeguards: [], reversible: "partial", consensus: { state: "accepted" } }],
+      executionMap: [{ id: "s1", action: "Transfer", actor: "DAO treasury", target: "Grants Safe", amount: "5M", asset: "ARB", dependency: "Safe approval", impact: "Custody moves to Safe signers.", humanDependencies: ["Safe signers"], technicalDependencies: ["Safe contract"], reversible: "partial", evidence: ["proposal"] }],
+      unresolvedQuestions: [{ id: "q1", question: "Who verifies milestones?", whyItMatters: "Verification controls the next tranche.", evidenceGap: "Reviewer not identified.", relatedExecutionStepIds: ["s1"] }],
+      reviewPriority: "high", reviewPriorityExplanation: "High review priority because treasury control moves and recovery is unclear.", externalEvidenceState: "retrieved" }, [], []);
+
+    expect(html).toContain("Proposal states");
+    expect(html).toContain("Partially supported");
+    expect(html).toContain("Contradicted");
+    expect(html).toContain("Not identified in reviewed material");
+    expect(html).toContain("Explicitly absent");
+    expect(html).toContain("Evidence details");
+    expect(html).toContain("Historically anchored");
+    expect(html).toContain("Block anchor");
+    expect(html).toContain("Execution consequences");
+    expect(html).toContain("Proposal passes");
+    expect(html).toContain("Why this priority");
+    expect(html).toContain("Questions requiring resolution");
   });
 });
