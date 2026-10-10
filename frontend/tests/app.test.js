@@ -285,6 +285,18 @@ describe("QuorumX frontend helpers", () => {
     expect(html).not.toContain("<img src=x");
   });
 
+  test("renders concise escaped revision intelligence instead of raw JSON", () => {
+    const html = renderDueDiligence({ overview: { purpose: "Review", requestedActions: [], assetsAffected: [], permissionsChanged: [], controlChanges: [] },
+      evidence: [], materialClaims: [], findings: [], executionMap: [], unresolvedQuestions: [], reviewPriority: "low", reviewPriorityExplanation: "Review." }, [], [{
+      revisionId: "2", changedAt: "2026-01-02T00:00:00Z", changes: [{ field: "Claim verification status", kind: "claim_status", affected: "external_factual:monthly_active_users",
+        previousValue: "Unverified", currentValue: "<Supported>", significance: "material", explanation: "Evidence changed." }],
+    }]);
+    expect(html).toContain("What changed?");
+    expect(html).toContain("Claim verification status");
+    expect(html).toContain("&lt;Supported&gt;");
+    expect(html).not.toContain("<Supported>");
+  });
+
   test("renders v3 secondary evidence and safeguard absence without overclaiming", () => {
     const html = renderDueDiligence({
       assessmentVersion: "3",

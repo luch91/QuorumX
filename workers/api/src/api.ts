@@ -1,5 +1,6 @@
 import type { Client } from "pg";
 import { revisionChanges } from "./revision_changes";
+import { buildRevisionIntelligence } from "./revision_intelligence";
 
 function boundedLimit(url: URL): number {
   const parsed = Number(url.searchParams.get("limit") ?? "20");
@@ -280,11 +281,24 @@ export async function getProposal(client: Client, canonicalId: string): Promise<
   `, [canonicalId]);
   const row = result.rows[0];
   if (!row) return undefined;
+  const history = await client.query(`
+    select revisions.id::text, observations.observed_at as "observedAt", revisions.normalized_payload as payload,
+      assessments.record as assessment
+    from quorumx.proposal_revision_observations observations
+    join quorumx.proposal_revisions revisions on revisions.id = observations.revision_id
+    left join lateral (
+      select record from quorumx.due_diligence_assessments_v3
+      where revision_id = revisions.id order by assessment_schema_version desc, assessed_at desc, id desc limit 1
+    ) assessments on true
+    where observations.proposal_id = $1
+    order by observations.observed_at asc, observations.id asc
+    limit 25
+  `, [row.id]);
   const { currentRevisionPayload, previousRevisionPayload, ...publicRow } = row;
   return { ...publicRow, changesSincePreviousRevision: revisionChanges(
     previousRevisionPayload as { title?: string; bodyText?: string; choices?: string[] } | undefined,
     currentRevisionPayload as { title?: string; bodyText?: string; choices?: string[] } | undefined,
-  ) };
+  ), revisionIntelligence: buildRevisionIntelligence(history.rows as Array<{ id: string; observedAt: string; payload: { title?: string; bodyText?: string; choices?: string[] }; assessment?: Record<string, unknown> }>) };
 }
 
 export async function getAssessment(client: Client, proposalKey: string): Promise<unknown | undefined> {

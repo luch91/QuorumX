@@ -32,7 +32,7 @@ function materialClaims(text: string): string[] {
 }
 
 function contextualLines(text: string, context: RegExp): string[] {
-  return lines(text).filter((line) => context.test(line)).map((line) => line.slice(0, 240)).sort();
+  return lines(text).filter((line) => { context.lastIndex = 0; return context.test(line); }).map((line) => line.slice(0, 240)).sort();
 }
 
 export function revisionChanges(previous?: RevisionMaterial, current?: RevisionMaterial): ProposalChange[] {
@@ -60,6 +60,11 @@ export function revisionChanges(previous?: RevisionMaterial, current?: RevisionM
       .flatMap((line) => matches(line, amountPattern));
     add("Funding amount", actionAmounts(before), actionAmounts(after),
       "The amount associated with a treasury action changed in the proposal text.");
+    const actionAssets = (text: string) => lines(text)
+      .filter((line) => /\b(?:transfer|send|allocate|fund|disburse|withdraw|grant|distribute)\b/i.test(line))
+      .flatMap((line) => matches(line, /\b(?:ARB|BAL|SAFE|ENS|ETH|USDC|USDT|DAI)\b/gi));
+    add("Treasury asset", actionAssets(before), actionAssets(after),
+      "The asset associated with a treasury action changed in the proposal text.");
   }
   add("Addresses mentioned", matches(before, /\b0x[a-fA-F0-9]{40}\b/g), matches(after, /\b0x[a-fA-F0-9]{40}\b/g),
     "An address reference changed; inspect whether it is a recipient, signer, or execution target.");
@@ -90,13 +95,16 @@ export function revisionChanges(previous?: RevisionMaterial, current?: RevisionM
     ["Clawback language", /\b(?:clawback|claw-back|recover unused funds)\b/gi],
     ["Milestone language", /\b(?:milestone|checkpoint)\b/gi],
   ] as const) {
-    const oldMentions = matches(before, expression), newMentions = matches(after, expression);
+    const oldMentions = contextualLines(before, expression), newMentions = contextualLines(after, expression);
     if (JSON.stringify(oldMentions) !== JSON.stringify(newMentions)) {
       changes.push({ field, previousValue: oldMentions.join(", ") || "Not mentioned",
         currentValue: newMentions.join(", ") || "Not mentioned", significance: "material",
-        explanation: "This term was added or removed. Read both revisions before inferring a safeguard change." });
+        explanation: "Relevant language changed. Read both revisions before inferring a safeguard change." });
     }
   }
+  add("Safeguard language", contextualLines(before, /\b(?:clawback|claw-back|recover unused funds|refund|recovery|timelock|multisig|milestone|checkpoint|spending restriction)\b/i),
+    contextualLines(after, /\b(?:clawback|claw-back|recover unused funds|refund|recovery|timelock|multisig|milestone|checkpoint|spending restriction)\b/i),
+    "Safeguard language changed; the review distinguishes explicit absence from material not identified.");
   add("Material claim text", materialClaims(before), materialClaims(after),
     "A measurable or factual claim changed between revisions; this text comparison does not independently verify either claim.");
   add("Permission holder", contextualLines(before, /\b(?:grant|assign|transfer)\b.{0,60}\b(?:permission|role|admin|owner)\b|\b(?:permission|role|admin|owner)\b.{0,60}\b(?:to|holder)\b/i),
