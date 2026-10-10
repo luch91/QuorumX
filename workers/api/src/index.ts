@@ -2,8 +2,11 @@ import type { Client } from "pg";
 import { getAssessment, getDueDiligence, getDueDiligenceV3, getProposal, listProposals, listSources } from "./api";
 import { runIndexerCycle } from "./cycle";
 import { createReassessmentJob, withDatabase } from "./database";
+import { getBackfillRun, setBackfillRunStatus, startBackfillRun } from "./database";
+import { parseBackfillCommand, prepareBackfillDryRun, summarizeBackfill } from "./backfill";
 import { snapshotSourceForSpace, validateMultiDaoCoverage } from "./sources";
 import { cycleOutcome } from "./operational";
+import { secureEqual } from "./admin_auth";
 
 const CONTRACT_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const PRIVATE_KEY = /^0x[0-9a-fA-F]{64}$/;
@@ -80,17 +83,11 @@ function cycleSettings(env: Env) {
   };
 }
 
-async function secureEqual(provided: string, expected: string): Promise<boolean> {
-  const encoded = new TextEncoder();
-  const [providedHash, expectedHash] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoded.encode(provided)),
-    crypto.subtle.digest("SHA-256", encoded.encode(expected)),
-  ]);
-  return crypto.subtle.timingSafeEqual(providedHash, expectedHash);
-}
-
 async function readiness(env: Env, correlationId: string): Promise<Response> {
   try {
+    if (typeof env.QUORUMX_ADMIN_TOKEN !== "string" || env.QUORUMX_ADMIN_TOKEN.length < 32) {
+      throw new Error("admin token is not configured safely");
+    }
     const state = await withDatabase(env.HYPERDRIVE.connectionString, async (client) => {
       const result = await client.query<{
         database_name: string; checked_at: string; sources: number; proposals: number;
@@ -121,7 +118,9 @@ async function readiness(env: Env, correlationId: string): Promise<Response> {
             where status in ('pending', 'retryable', 'processing')) as oldest_backlog,
           case when to_regclass('quorumx.submission_intents') is not null
             and to_regclass('quorumx.due_diligence_assessments_v3') is not null
-            then '0012_due_diligence_v3_schema.sql' else null end as migration
+            and to_regclass('quorumx.backfill_runs') is not null
+            and to_regclass('quorumx.backfill_candidates') is not null
+            then '0013_bounded_format3_backfill.sql' else null end as migration
       `);
       return result.rows[0];
     });
@@ -199,6 +198,41 @@ async function route(request: Request, env: Env): Promise<Response> {
       (client) => createReassessmentJob(client, canonicalId, "3.3", runId));
     return jobId ? json({ jobId, assessmentRunId: runId }, { status: 202 })
       : json({ error: "proposal_not_found_or_duplicate_run" }, { status: 409 });
+  }
+  if (url.pathname === "/internal/backfill" && request.method === "POST") {
+    const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+    if (!await secureEqual(provided, env.QUORUMX_ADMIN_TOKEN)) return json({ error: "unauthorized" }, { status: 401 });
+    let command;
+    try {
+      command = parseBackfillCommand(await request.json());
+    } catch (error) {
+      return json({ error: error instanceof RangeError ? error.message : "invalid_json" }, { status: 400 });
+    }
+    if (command.action === "dry-run") {
+      const runId = await withDatabase(env.HYPERDRIVE.connectionString,
+        (client) => prepareBackfillDryRun(client, command.options));
+      const run = await withDatabase(env.HYPERDRIVE.connectionString, (client) => getBackfillRun(client, runId));
+      return json({ ...run, report: summarizeBackfill(run?.candidates ?? []) });
+    }
+    const { runId } = command;
+    if (command.action === "start") {
+      const started = await withDatabase(env.HYPERDRIVE.connectionString, (client) => startBackfillRun(client, runId));
+      if (!started) return json({ error: "run_not_startable" }, { status: 409 });
+      const run = await withDatabase(env.HYPERDRIVE.connectionString, (client) => getBackfillRun(client, runId));
+      return json({ runId, status: run?.status ?? "running" }, { status: 202 });
+    }
+    if (command.action === "pause" || command.action === "resume") {
+      const status = command.action === "pause" ? "paused" : "running";
+      const outcome = await withDatabase(env.HYPERDRIVE.connectionString, (client) => setBackfillRunStatus(client, runId, status));
+      if (outcome === "not_found") return json({ error: "run_not_found" }, { status: 404 });
+      if (outcome === "invalid_state") return json({ error: `run_not_${command.action}able` }, { status: 409 });
+      const run = await withDatabase(env.HYPERDRIVE.connectionString, (client) => getBackfillRun(client, runId));
+      return json({ runId, status: run?.status ?? status });
+    }
+    if (command.action === "status") {
+      const run = await withDatabase(env.HYPERDRIVE.connectionString, (client) => getBackfillRun(client, runId));
+      return run ? json({ ...run, report: summarizeBackfill(run.candidates) }) : json({ error: "run_not_found" }, { status: 404 });
+    }
   }
   if (request.method !== "GET") {
     return json({ error: "method_not_allowed", correlationId }, { status: 405, headers: { allow: "GET" } }, "no-store", correlationId);

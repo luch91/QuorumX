@@ -2,6 +2,7 @@ import { Client } from "pg";
 import { canonicalJson, contractCanonicalJson, sha256 } from "./canonical";
 import type { SnapshotProposal, StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "./domain";
 import type { SnapshotSourceDefinition } from "./sources";
+import type { BackfillRunConfig, BackfillState } from "./backfill_types";
 
 export interface IngestResult {
   proposalsSeen: number;
@@ -121,6 +122,7 @@ export interface ClaimedJob {
   assessmentVersion?: "1" | "2" | "3";
   assessmentSchemaVersion?: string;
   assessmentRunId?: string;
+  jobKind?: "live" | "backfill";
 }
 
 export interface SubmittedJob {
@@ -137,6 +139,7 @@ export interface SubmittedJob {
   contractAddress?: string;
   source?: { kind: "snapshot"; space: string; proposalId: string };
   expectedContractContentHash?: string;
+  jobKind?: "live" | "backfill";
 }
 
 export async function withDatabase<T>(connectionString: string, task: (client: Client) => Promise<T>): Promise<T> {
@@ -408,6 +411,7 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
     canonical_id: string; transaction_hash: string; transaction_row_id: string; assessment_version: "1" | "2" | "3";
     expected_contract_content_hash: string; assessment_schema_version: string; assessment_run_id: string;
     contract_address: string; source: { kind: "snapshot"; space: string; proposalId: string };
+    job_kind: "live" | "backfill";
   }>(`
     select
       jobs.id::text as job_id,
@@ -417,6 +421,7 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
       jobs.assessment_version,
       jobs.assessment_schema_version,
       jobs.assessment_run_id,
+      jobs.job_kind,
       revisions.normalized_payload ->> 'assessmentContentHash' as expected_contract_content_hash,
       revisions.normalized_payload -> 'source' as source,
       proposals.canonical_id,
@@ -451,6 +456,7 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
     contractAddress: row.contract_address,
     source: row.source,
     expectedContractContentHash: row.expected_contract_content_hash,
+    jobKind: row.job_kind,
   }));
 }
 
@@ -466,31 +472,57 @@ export async function claimAssessmentJob(
       order by id
       for update
     `);
+    await client.query(`
+      select id from quorumx.backfill_runs
+      where status = 'running'
+      order by id
+      for share
+    `);
     const result = await client.query<{
     id: string; attempt_count: number; max_attempts: number; revision_id: string;
     canonical_id: string; content_hash: string; normalized_payload: Record<string, unknown>; assessment_version: "1" | "2" | "3";
     assessment_schema_version: string; assessment_run_id: string;
+    job_kind: "live" | "backfill";
   }>(`
-    with eligible_candidate as (
+    with backfill_usage as (
+      select
+        count(*) filter (where transactions.id is not null) as submitted_count,
+        (select count(*) from quorumx.assessment_jobs reserved
+          where reserved.job_kind = 'backfill' and reserved.status = 'processing'
+            and reserved.locked_at >= now() - interval '15 minutes') as reserved_count
+      from quorumx.transactions transactions
+      join quorumx.assessment_jobs jobs on jobs.id = transactions.job_id
+      where jobs.job_kind = 'backfill' and transactions.submitted_at >= now() - interval '24 hours'
+    ), backfill_limit as (
+      select min(daily_submission_budget) as count from quorumx.backfill_runs where status = 'running'
+    ), eligible_candidate as (
       select candidate.id
       from quorumx.assessment_jobs candidate
       join quorumx.proposal_revisions revisions on revisions.id = candidate.revision_id
       join quorumx.proposals proposals on proposals.id = revisions.proposal_id
       join quorumx.sources sources on sources.id = proposals.source_id
+      left join quorumx.backfill_runs on backfill_runs.id = candidate.backfill_run_id
+      cross join backfill_usage
+      cross join backfill_limit
       where candidate.assessment_version = $2 and candidate.assessment_schema_version = $3
         and sources.assessment_enabled
+        and (candidate.job_kind = 'live' or (backfill_runs.status = 'running'
+          and backfill_usage.submitted_count + backfill_usage.reserved_count
+            < backfill_limit.count))
         and ((
           select count(*) from quorumx.transactions recent_transactions
           join quorumx.assessment_jobs submitted_jobs on submitted_jobs.id = recent_transactions.job_id
           join quorumx.proposal_revisions submitted_revisions on submitted_revisions.id = submitted_jobs.revision_id
           join quorumx.proposals submitted_proposals on submitted_proposals.id = submitted_revisions.proposal_id
           where submitted_proposals.source_id = sources.id
+            and submitted_jobs.job_kind = 'live'
             and recent_transactions.submitted_at >= now() - interval '24 hours'
         ) + (
           select count(*) from quorumx.assessment_jobs reserved_jobs
           join quorumx.proposal_revisions reserved_revisions on reserved_revisions.id = reserved_jobs.revision_id
           join quorumx.proposals reserved_proposals on reserved_proposals.id = reserved_revisions.proposal_id
           where reserved_proposals.source_id = sources.id
+            and reserved_jobs.job_kind = 'live'
             and reserved_jobs.status = 'processing'
             and reserved_jobs.locked_at >= now() - interval '15 minutes'
         )) < sources.daily_assessment_budget
@@ -499,9 +531,10 @@ export async function claimAssessmentJob(
           or (candidate.status = 'processing' and candidate.lease_expires_at <= now())
         )
       order by
+        case candidate.job_kind when 'live' then 0 else 1 end,
+        case proposals.status when 'active' then 0 when 'pending' then 1 else 2 end,
         candidate.attempt_count asc,
         candidate.next_poll_at asc,
-        case proposals.status when 'active' then 0 when 'pending' then 1 else 2 end,
         proposals.voting_ends_at asc nulls last,
         revisions.created_at asc,
         candidate.id asc
@@ -525,6 +558,7 @@ export async function claimAssessmentJob(
       jobs.assessment_version,
       jobs.assessment_schema_version,
       jobs.assessment_run_id,
+      jobs.job_kind,
       (select proposals.canonical_id from quorumx.proposal_revisions revisions
        join quorumx.proposals proposals on proposals.id = revisions.proposal_id
        where revisions.id = jobs.revision_id),
@@ -552,6 +586,7 @@ export async function claimAssessmentJob(
       revisionId: row.revision_id, revisionHash: row.content_hash, expectedContractContentHash,
       proposalKey: row.canonical_id, source, assessmentVersion: row.assessment_version,
       assessmentSchemaVersion: row.assessment_schema_version, assessmentRunId: row.assessment_run_id,
+      jobKind: row.job_kind,
     };
     await client.query("commit");
     return job;
@@ -583,19 +618,192 @@ export async function createReassessmentJob(
   return result.rows[0]?.id;
 }
 
+export async function createBackfillDryRun(
+  client: Client, candidates: Array<{ dao: string; canonicalId: string }>, config: BackfillRunConfig,
+): Promise<string> {
+  await client.query("begin");
+  try {
+    const run = await client.query<{ id: string }>(`
+      insert into quorumx.backfill_runs (status, per_dao_limit, total_limit, window_days, daily_submission_budget)
+      values ('dry_run', $1, $2, $3, $4) returning id::text
+    `, [config.perDaoLimit, config.totalLimit, config.windowDays, config.dailySubmissionBudget]);
+    const runId = run.rows[0].id;
+    await client.query(`
+        with requested as (
+          select candidate.dao, candidate.canonical_id, candidate.ordinality
+          from rows from (jsonb_to_recordset($2::jsonb) as (dao text, canonical_id text))
+            with ordinality as candidate(dao, canonical_id, ordinality)
+        )
+        insert into quorumx.backfill_candidates (run_id, revision_id, dao_name, state, reason)
+        select $1, revisions.id, requested.dao,
+          case
+            when exists (select 1 from quorumx.due_diligence_assessments_v3 assessments
+              where assessments.revision_id = revisions.id and assessments.assessment_schema_version = '3.3') then 'skipped'
+            when exists (select 1 from quorumx.assessment_jobs jobs
+              where jobs.revision_id = revisions.id and jobs.assessment_version = '3'
+                and jobs.assessment_schema_version = '3.3') then 'skipped'
+            else 'eligible'
+          end,
+          case when exists (select 1 from quorumx.due_diligence_assessments_v3 assessments
+            where assessments.revision_id = revisions.id and assessments.assessment_schema_version = '3.3')
+            then 'existing_format3_assessment'
+          when exists (select 1 from quorumx.assessment_jobs jobs
+            where jobs.revision_id = revisions.id and jobs.assessment_version = '3'
+              and jobs.assessment_schema_version = '3.3') then 'existing_format3_job' else null end
+        from quorumx.proposals proposals
+        join quorumx.proposal_revisions revisions on revisions.id = proposals.current_revision_id
+        join requested on requested.canonical_id = proposals.canonical_id
+        where proposals.status = 'closed'
+        order by requested.ordinality
+        on conflict (run_id, revision_id) do nothing
+      `, [runId, JSON.stringify(candidates.map((candidate) => ({ dao: candidate.dao, canonical_id: candidate.canonicalId })))]);
+    await client.query("commit");
+    return runId;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
+export async function startBackfillRun(client: Client, runId: string): Promise<boolean> {
+  await client.query("begin");
+  try {
+    const locked = await client.query<{ status: string }>(
+      "select status from quorumx.backfill_runs where id = $1 for update", [runId]);
+    if (locked.rows[0]?.status !== "dry_run") { await client.query("rollback"); return false; }
+    await client.query(`
+        insert into quorumx.assessment_jobs (
+          revision_id, assessment_version, assessment_schema_version, assessment_run_id,
+          is_initial_assessment, job_kind, backfill_run_id, status, available_at, created_at, updated_at
+        )
+        select candidates.revision_id, '3', '3.3',
+          'backfill:3.3:' || candidates.run_id::text || ':' || candidates.revision_id::text,
+          true, 'backfill', candidates.run_id, 'pending', now(), now(), now()
+        from quorumx.backfill_candidates candidates
+        where candidates.run_id = $1 and candidates.state = 'eligible'
+        on conflict do nothing
+    `, [runId]);
+    await client.query(`
+      with selected as (
+        select candidates.id, (select jobs.id from quorumx.assessment_jobs jobs
+          where jobs.revision_id = candidates.revision_id and jobs.backfill_run_id = $1 limit 1) as job_id
+        from quorumx.backfill_candidates candidates
+        where candidates.run_id = $1 and candidates.state = 'eligible'
+      )
+      update quorumx.backfill_candidates candidates set
+        job_id = selected.job_id,
+        state = case when selected.job_id is not null then 'queued' else 'skipped' end,
+        reason = case when selected.job_id is not null then null else 'existing_format3_job' end,
+        updated_at = now()
+      from selected where candidates.id = selected.id
+    `, [runId]);
+    await client.query(`
+      with state as (
+        select exists (select 1 from quorumx.backfill_candidates candidates
+          where candidates.run_id = $1 and candidates.state in ('eligible','queued','processing','retrying')) as has_remaining
+      )
+      update quorumx.backfill_runs runs set
+        status = case when state.has_remaining then 'running' else 'completed' end,
+        completed_at = case when state.has_remaining then null else now() end,
+        updated_at = now()
+      from state where runs.id = $1
+    `, [runId]);
+    await client.query("commit");
+    return true;
+  } catch (error) {
+    await client.query("rollback");
+    if ((error as { code?: string }).code === "23505") return false;
+    throw error;
+  }
+}
+
+export async function setBackfillRunStatus(
+  client: Client, runId: string, status: "paused" | "running",
+): Promise<"changed" | "not_found" | "invalid_state"> {
+  const existing = await client.query<{ status: string }>("select status from quorumx.backfill_runs where id = $1", [runId]);
+  if (!existing.rows[0]) return "not_found";
+  if (existing.rows[0].status !== "running" && existing.rows[0].status !== "paused") return "invalid_state";
+  const result = await client.query(`update quorumx.backfill_runs runs set
+      status = case when $2 = 'running' and not exists (select 1 from quorumx.backfill_candidates candidates
+        where candidates.run_id = runs.id and candidates.state in ('eligible','queued','processing','retrying'))
+        then 'completed' else $2 end,
+      completed_at = case when $2 = 'running' and not exists (select 1 from quorumx.backfill_candidates candidates
+        where candidates.run_id = runs.id and candidates.state in ('eligible','queued','processing','retrying'))
+        then now() else completed_at end,
+      updated_at = now()
+    where id = $1 and status in ('running','paused')`, [runId, status]);
+  return (result.rowCount ?? 0) === 1 ? "changed" : "invalid_state";
+}
+
+export async function getBackfillRun(client: Client, runId: string) {
+  const run = await client.query(`select id::text, status, per_dao_limit as "perDaoLimit", total_limit as "totalLimit",
+    window_days as "windowDays", daily_submission_budget as "dailySubmissionBudget", created_at as "createdAt",
+    updated_at as "updatedAt", completed_at as "completedAt" from quorumx.backfill_runs where id = $1`, [runId]);
+  if (!run.rows[0]) return undefined;
+  const candidates = await client.query<{ dao: string; state: BackfillState; canonicalId: string; revisionId: string; reason: string | null; jobId: string | null }>(`
+    select candidates.dao_name as dao, proposals.canonical_id as "canonicalId",
+      candidates.revision_id::text as "revisionId", candidates.reason,
+      candidates.job_id::text as "jobId",
+      case
+        when assessments.id is not null and candidates.job_id is not null then 'accepted'
+        when jobs.status in ('processing','submitted') then 'processing'
+        when jobs.status = 'retryable' then 'retrying'
+        when jobs.status in ('failed','dead_letter') then 'failed'
+        when jobs.status = 'pending' then 'queued'
+        else candidates.state
+      end as state
+    from quorumx.backfill_candidates candidates
+    join quorumx.proposal_revisions revisions on revisions.id = candidates.revision_id
+    join quorumx.proposals proposals on proposals.id = revisions.proposal_id
+    left join quorumx.assessment_jobs jobs on jobs.id = candidates.job_id
+    left join quorumx.due_diligence_assessments_v3 assessments
+      on assessments.revision_id = candidates.revision_id and assessments.assessment_schema_version = '3.3'
+    where candidates.run_id = $1 order by candidates.id
+  `, [runId]);
+  return { ...run.rows[0], candidates: candidates.rows };
+}
+
+async function settleBackfillCandidate(client: Client, jobId: string, state: "accepted" | "retrying" | "failed"): Promise<void> {
+  await client.query(`
+    update quorumx.backfill_candidates candidates
+    set state = $2, reason = case when $2 = 'failed' then coalesce(jobs.last_error, 'assessment_failed') else null end,
+        updated_at = now()
+    from quorumx.assessment_jobs jobs
+    where candidates.job_id = jobs.id and jobs.id = $1 and jobs.job_kind = 'backfill'
+  `, [jobId, state]);
+  await client.query(`
+    update quorumx.backfill_runs runs
+    set status = 'completed', completed_at = now(), updated_at = now()
+    where runs.status in ('running','paused')
+      and exists (select 1 from quorumx.assessment_jobs jobs where jobs.id = $1 and jobs.backfill_run_id = runs.id)
+      and not exists (
+        select 1 from quorumx.backfill_candidates candidates
+        where candidates.run_id = runs.id and candidates.state in ('eligible','queued','processing','retrying')
+      )
+  `, [jobId]);
+}
+
 export async function markJobRetry(client: Client, job: ClaimedJob, message: string): Promise<void> {
   const terminal = job.attemptCount >= job.maxAttempts;
   // Hosted development RPCs can enforce daily quotas. Keep retries bounded while
   // spreading a transient outage across several days instead of one hour.
   const delayMinutes = Math.min(360, 2 ** Math.min(job.attemptCount, 9));
-  await client.query(`
-    update quorumx.assessment_jobs
-    set status = $2, available_at = now() + make_interval(mins => $3),
-        next_poll_at = now() + make_interval(mins => $3),
-        locked_at = null, locked_by = null, lease_expires_at = null, last_error = $4, updated_at = now(),
-        completed_at = case when $2 = 'dead_letter' then now() else null end
-    where id = $1
-  `, [job.id, terminal ? "dead_letter" : "retryable", delayMinutes, message.slice(0, 1_000)]);
+  await client.query("begin");
+  try {
+    await client.query(`
+      update quorumx.assessment_jobs
+      set status = $2, available_at = now() + make_interval(mins => $3),
+          next_poll_at = now() + make_interval(mins => $3),
+          locked_at = null, locked_by = null, lease_expires_at = null, last_error = $4, updated_at = now(),
+          completed_at = case when $2 = 'dead_letter' then now() else null end
+      where id = $1
+    `, [job.id, terminal ? "dead_letter" : "retryable", delayMinutes, message.slice(0, 1_000)]);
+    if (job.jobKind === "backfill") await settleBackfillCandidate(client, job.id, terminal ? "failed" : "retrying");
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
 }
 
 export async function recordSubmittedTransaction(
@@ -663,12 +871,20 @@ export async function prepareSubmissionIntent(
 }
 
 export async function markSubmissionUncertain(client: Client, job: ClaimedJob): Promise<void> {
-  await client.query(`
-    update quorumx.assessment_jobs
-    set status = 'dead_letter', last_error = 'submission_outcome_unknown', completed_at = now(),
-        locked_at = null, locked_by = null, lease_expires_at = null, updated_at = now()
-    where id = $1
-  `, [job.id]);
+  await client.query("begin");
+  try {
+    await client.query(`
+      update quorumx.assessment_jobs
+      set status = 'dead_letter', last_error = 'submission_outcome_unknown', completed_at = now(),
+          locked_at = null, locked_by = null, lease_expires_at = null, updated_at = now()
+      where id = $1
+    `, [job.id]);
+    if (job.jobKind === "backfill") await settleBackfillCandidate(client, job.id, "failed");
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
 }
 
 export async function finalizeAssessment(
@@ -681,6 +897,7 @@ export async function finalizeAssessment(
     indexedFrom: "submitted_transaction" | "existing_contract_state";
     assessmentRunId?: string;
     assessmentSchemaVersion?: string;
+    jobKind?: "live" | "backfill";
   },
 ): Promise<void> {
   await client.query("begin");
@@ -793,6 +1010,7 @@ export async function finalizeAssessment(
           completed_at = now(), updated_at = now()
       where id = $1
     `, [input.jobId]);
+    if (input.jobKind === "backfill") await settleBackfillCandidate(client, input.jobId, "accepted");
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -824,6 +1042,7 @@ export async function markSubmittedTerminal(
           updated_at = now()
       where id = $1
     `, [job.jobId, message.slice(0, 1_000), retryable ? "retryable" : "dead_letter", delayMinutes]);
+    if (job.jobKind === "backfill") await settleBackfillCandidate(client, job.jobId, retryable ? "retrying" : "failed");
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -849,6 +1068,7 @@ export async function quarantineSubmittedAssessment(
           locked_at = null, locked_by = null, lease_expires_at = null, updated_at = now()
       where id = $1
     `, [job.jobId, category]);
+    if (job.jobKind === "backfill") await settleBackfillCandidate(client, job.jobId, "failed");
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
