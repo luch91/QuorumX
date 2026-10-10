@@ -789,10 +789,11 @@ def split_passages(material):
     # Titles name proposals but frequently use action nouns (e.g. "Grants
     # program"); only body and voting-choice material drive action extraction.
     content = "\n".join([source.get("body", "")] + source.get("choices", []))
-    passages = [line.strip() for line in content.splitlines() if line.strip()]
-    if len(passages) > 120:
-        raise ValueError("proposal exceeds reviewed passage limit")
-    return passages
+    # `fetch_proposal_context()` has already bounded the complete canonical
+    # material to 24 KB. Line count is only formatting density: rejecting a
+    # dense but byte-bounded proposal would omit otherwise reviewed material.
+    # Preserve every non-empty body/choice passage for deterministic review.
+    return [line.strip() for line in content.splitlines() if line.strip()]
 
 
 def plain_text(line):

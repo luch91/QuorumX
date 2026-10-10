@@ -114,6 +114,103 @@ class DueDiligenceV33Test(unittest.TestCase):
         ):
             self.assertNotIn(unsupported, rendered)
 
+    def test_exactly_120_non_empty_passages_remains_accepted(self):
+        material = self.m.canonical({
+            "id": "passages-120", "space": "safe.eth", "title": "Boundary",
+            "body": "\n".join("context " + str(index) for index in range(120)),
+            "choices": [], "state": "active",
+        })
+        self.assertEqual(len(self.m.split_passages(material)), 120)
+
+    def test_long_material_preserves_decision_bearing_content_at_the_end(self):
+        body = ["context " + str(index) for index in range(121)]
+        body.append("Transfer 5M ARB to the Grants Safe with a clawback mechanism.")
+        material = self.m.canonical({
+            "id": "passages-121", "space": "safe.eth", "title": "Long proposal",
+            "body": "\n".join(body), "choices": [], "state": "active",
+        })
+        self.assertLess(len(material.encode("utf-8")), 24000)
+        facts = self.m.derive_record_facts(material, None)
+        self.assertEqual(facts["actions"][0]["amount"], "5M")
+        self.assertTrue(any(item["safeguard"] == "recovery" and item["state"] == "present"
+                            for item in facts["safeguardGaps"]))
+
+    def test_actual_safenet_aegis_proposal_is_within_byte_limit_and_assessable(self):
+        material = fixture_material(self.m, "safenet_aegis_sep56.json")
+        passages = self.m.split_passages(material)
+        self.assertEqual(self.m.digest(material), "a4779f4047c8ff350f783f696063d64a4b0cc6e290c2c6456a38be64b8b5ebc9")
+        self.assertEqual(len(passages), 129)
+        self.assertLess(len(material.encode("utf-8")), 24000)
+        facts = self.m.derive_record_facts(material, None, assessment_context="retrospective")
+        report = self.m.build_report(
+            facts, material,
+            {"kind": "snapshot", "space": "safe.eth",
+             "proposalId": "0x9d226d025170ec4c56adc53dd77dda851da75c712757122c70dea965003278c4"},
+            "backfill:3.3:1:270282",
+            {"assessmentContext": "retrospective", "proposalCloseTime": "2026-10-09T00:00:00Z",
+             "evidenceRetrievedAt": "2026-10-10T00:00:00Z"},
+        )
+        self.assertEqual(report["assessmentSchemaVersion"], "3.3")
+        self.assertEqual(report["assessmentRunId"], "backfill:3.3:1:270282")
+        self.assertIn("Copyright and related rights waived via CC0.", passages)
+
+    def test_worst_case_byte_bounded_material_retains_every_passage(self):
+        body = "\n".join("x" for _ in range(7900))
+        material = self.m.canonical({
+            "id": "passages-worst-case", "space": "safe.eth", "title": "Bounded",
+            "body": body, "choices": [], "state": "active",
+        })
+        self.assertLess(len(material.encode("utf-8")), 24000)
+        passages = self.m.split_passages(material)
+        self.assertEqual(len(passages), 7900)
+        self.assertEqual(passages[-1], "x")
+        facts = self.m.derive_record_facts(material, None)
+        report = self.m.build_report(
+            facts, material,
+            {"kind": "snapshot", "space": "safe.eth", "proposalId": "passages-worst-case"},
+            "run-passages-worst-case",
+        )
+        self.assertEqual(report["assessmentSchemaVersion"], "3.3")
+
+    def test_existing_admissible_fixture_reports_remain_canonically_unchanged(self):
+        expected = {
+            "generic_distribution.json": "c2759d67152be5475207a198730fb44b0fb4bd0d0eada93998a1fe34bf12d273",
+            "governance_safeguards.json": "fa6d36d4948c54471d8a7fec3a77d4a32b58fe1ff957f8ec3b4ccd9c40fa2ac8",
+            "permission_safeguards.json": "fa9157f8c15889fb20545105d62a8ce6821852177c70480a17e45d8a61a41381",
+            "treasury_safeguards.json": "85a50d07dda6e50b8b8a41717b9581b7a36a6ea18cadf59c0e773a13e469ab11",
+        }
+        for name, digest in expected.items():
+            with self.subTest(fixture=name):
+                material = fixture_material(self.m, name)
+                payload = json.loads((pathlib.Path(__file__).parents[2] / "fixtures" / "due_diligence_v3_3" / name).read_text(encoding="utf-8"))
+                facts = self.m.derive_record_facts(material, None)
+                report = self.m.build_report(
+                    facts, material,
+                    {"kind": "snapshot", "space": payload["space"], "proposalId": payload["id"]},
+                    "baseline-" + pathlib.Path(name).stem,
+                )
+                self.assertEqual(self.m.digest(self.m.canonical(report)), digest)
+
+    def test_existing_24kb_material_limit_still_rejects_oversize_proposal(self):
+        source = {"kind": "snapshot", "space": "safe.eth", "proposalId": "oversize"}
+
+        class Response:
+            status = 200
+            headers = {"content-type": b"application/json"}
+            body = json.dumps({"data": {"proposal": {
+                "id": "oversize", "space": {"id": "safe.eth"}, "title": "Oversize",
+                "body": "x" * 25000, "choices": [], "state": "closed", "end": 1,
+            }}}).encode("utf-8")
+
+        original_gl = self.m.gl
+        try:
+            self.m.gl = types.SimpleNamespace(nondet=types.SimpleNamespace(
+                web=types.SimpleNamespace(get=lambda _url: Response())))
+            with self.assertRaisesRegex(ValueError, "proposal material exceeds limit"):
+                self.m.fetch_proposal_context(source)
+        finally:
+            self.m.gl = original_gl
+
     def test_generic_execution_steps_do_not_receive_claim_framework_templates(self):
         material = self.m.canonical({
             "id": "events-1", "space": "safe.eth", "title": "Community events",
