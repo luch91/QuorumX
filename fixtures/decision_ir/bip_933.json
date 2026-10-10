@@ -1,0 +1,8 @@
+{
+  "source": "snapshot",
+  "space": "balancer.eth",
+  "proposalId": "0x5a66f49d3aa02d9474e13acd1e6ac81d4a93398a8df0ec6b3adbe5170a74d3d8",
+  "title": "[BIP-933] Claim Timeless VeBalGrant USDC fees",
+  "body": "# TL;DR\n\nAfter [BIP-925](https://forum.balancer.fi/t/bip-925-unwind-timeless-ve8020-bal-grant/7095), the inactive [Timeless VeBalGrant](https://etherscan.io/address/0x89f67f3054bfd662971854190dbc18dcabb416f6) still has approximately **10,286.807445 USDC** in unclaimed FeeDistributor rewards. These were not recovered by BIP-925 because `withdrawBalances()` only handles BAL and WETH.\n\nThe DAO multisig can recover the USDC by atomically calling `claimFees(FeeDistributor, USDC, DAO, 0)` four times. This is necessary because the grant has accumulated more than 60 weeks of unclaimed USDC, while the FeeDistributor settles at most 20 weeks per call.\n\n# Technical Specifications\n\nThere is a PR with the DAO Safe payload and successful simulations available at https://github.com/balancer/multisig-ops/pull/2882",
+  "choices": ["Yes, let's do it", "No, this is not the way", "Abstain"]
+}

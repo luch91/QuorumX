@@ -1,3 +1,5 @@
+import type { DecisionIR } from "./decision_ir";
+
 export type ProposalStatus = "pending" | "active" | "closed" | "unknown";
 
 export interface SnapshotProposal {
@@ -131,7 +133,8 @@ export interface DueDiligenceV3Evidence {
 
 export interface StoredDueDiligenceV3Assessment {
   assessmentVersion: "3";
-  assessmentSchemaVersion?: "3.1" | "3.2" | "3.3";
+  assessmentSchemaVersion?: "3.1" | "3.2" | "3.3" | "3.4";
+  decisionIR?: DecisionIR;
   assessmentRunId?: string;
   assessmentContext?: "live" | "retrospective";
   proposalCloseTime?: string;

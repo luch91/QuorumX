@@ -1,0 +1,8 @@
+{
+  "source": "snapshot",
+  "space": "safe.eth",
+  "proposalId": "0x9d226d025170ec4c56adc53dd77dda851da75c712757122c70dea965003278c4",
+  "title": "[SEP 56] Fund Safenet Aegis to Grow SAFE Token Utility and Sustainability",
+  "bodyExcerpt": "This proposal requests ~7,400,000 SAFE tokens from the SafeDAO treasury to fund Safenet Aegis over a limited 12-month period. ~5,000,000 SAFE tokens are allocated for validator staking rewards and ~2,400,000 SAFE is allocated as milestone-based grants to six genesis Sentinels.",
+  "choices": ["Accept", "Abstain", "Make No Changes"]
+}

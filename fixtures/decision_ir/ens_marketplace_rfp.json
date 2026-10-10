@@ -1,0 +1,8 @@
+{
+  "source": "snapshot",
+  "space": "ens.eth",
+  "proposalId": "0x943e585d1a4996525c5c7d229401d604ea56fe08c2c9c615c44f048ba42487b7",
+  "title": "[7.1] [Social] SPP3: Marketplace RFP",
+  "bodyExcerpt": "One award of up to $500,000 from the remainder, milestone-gated: roughly half streamed through go-live, half released against traction gates verifiable on-chain. The balance returns to the DAO treasury, the cohort is not delayed, and no new money is requested.",
+  "choices": ["For", "Against", "Abstain"]
+}
