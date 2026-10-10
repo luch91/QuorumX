@@ -8,6 +8,10 @@ import pytest
 
 
 SOURCE = {"kind": "snapshot", "space": "safe.eth", "proposalId": "generic-distribution-1"}
+SAFENET_AEGIS_SOURCE = {
+    "kind": "snapshot", "space": "safe.eth",
+    "proposalId": "0x9d226d025170ec4c56adc53dd77dda851da75c712757122c70dea965003278c4",
+}
 GENVM_SDK_VERSION = "v0.2.16"
 SAFE_ADDRESS = "0x1111111111111111111111111111111111111111"
 SAFE_OWNERS = [
@@ -49,6 +53,27 @@ def windows_genlayer_test_stdin_cleanup(monkeypatch, request):
 def generic_fixture():
     path = Path(__file__).parents[2] / "fixtures" / "due_diligence_v3_3" / "generic_distribution.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def safenet_aegis_fixture():
+    path = Path(__file__).parents[2] / "fixtures" / "due_diligence_v3_3" / "safenet_aegis_sep56.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def set_snapshot_fixture(vm, fixture, source=SOURCE, end=1791309600):
+    vm.clear_mocks()
+    vm.mock_web(
+        r"^https://hub\.snapshot\.org/graphql\?",
+        {
+            "method": "GET",
+            "status": 200,
+            "body": json.dumps({"data": {"proposal": {
+                "id": source["proposalId"], "title": fixture["title"], "body": fixture["body"],
+                "choices": fixture["choices"], "state": fixture["state"], "end": end,
+                "space": {"id": source["space"]},
+            }}}),
+        },
+    )
 
 
 def set_snapshot_body(vm, body, title="Runtime proposal", state="active", end=1893456000):
@@ -175,6 +200,28 @@ def test_v33_generic_distribution_is_source_grounded_and_reproducible(
     assert "pre-exploit block 25872248" not in rendered
     assert "per-pool allocations" not in rendered
     assert "claim contract" not in rendered
+    assert direct_vm.run_validator() is True
+
+
+def test_v33_accepts_the_exact_long_safenet_aegis_proposal_in_genvm(
+        direct_vm, direct_deploy, direct_owner, direct_alice):
+    operator = "0x" + bytes(direct_alice).hex()
+    direct_vm.sender = direct_owner
+    contract = direct_deploy(
+        "contracts/governance_due_diligence_v3_3.py",
+        operator,
+        json.dumps(["safe.eth"]),
+        sdk_version=GENVM_SDK_VERSION,
+    )
+    fixture = safenet_aegis_fixture()
+    set_snapshot_fixture(direct_vm, fixture, SAFENET_AEGIS_SOURCE)
+    direct_vm.sender = direct_alice
+
+    record = json.loads(contract.assess(json.dumps(SAFENET_AEGIS_SOURCE), "backfill:3.3:1:270282"))
+
+    assert record["assessmentSchemaVersion"] == "3.3"
+    assert record["assessmentContext"] == "retrospective"
+    assert record["assessmentRunId"] == "backfill:3.3:1:270282"
     assert direct_vm.run_validator() is True
 
 
