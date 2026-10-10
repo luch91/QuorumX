@@ -25,12 +25,13 @@ Set `DATABASE_URL` to the runtime-role connection only for the command invocatio
 npm run db:verify
 ```
 
-Successful output after migration `0010_runtime_privilege_matrix.sql` reports 12
-tables, `schema_usage: true`, `proposal_rw: true`,
+Successful output after migration `0013_bounded_format3_backfill.sql` reports at
+least 14 tables, `schema_usage: true`, `proposal_rw: true`,
 `due_diligence_rw: true`, both delete privileges `false`, no accepted-record
 mutation privilege, no schema creation, and no unsafe role membership. Migration
 0006 keeps format 1 assessments intact; migrations 0007-0010 add immutable
 observation, acceptance, recovery, audit, and runtime-privilege invariants.
 Migration 0011 adds format 3 storage without weakening those invariants, and
-0012 adds the current internal format 3 schema/run metadata. Earlier migration
+0012 adds the current internal format 3 schema/run metadata. 0013 adds bounded,
+pausable Format 3 retrospective backfill runs and per-DAO observability. Earlier migration
 numbers are never renamed or overwritten.

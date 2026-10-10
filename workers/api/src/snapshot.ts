@@ -40,6 +40,14 @@ function evidenceUrls(body: string): string[] {
   return [...new Set(body.match(/https?:\/\/[^\s)<>'"`]+/g) ?? [])].slice(0, 100);
 }
 
+function requireRequestedSpace(proposals: SnapshotProposal[], space: string): SnapshotProposal[] {
+  const expected = space.trim().toLowerCase();
+  if (proposals.some((proposal) => proposal.source.space !== expected)) {
+    throw new Error("Snapshot returned a proposal from an unexpected space");
+  }
+  return proposals;
+}
+
 async function boundedResponseText(response: Response): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -123,7 +131,7 @@ export async function fetchRecentSnapshotProposals(
   return (payload.data?.proposals ?? []).map((proposal) => normalizeSnapshotProposal(proposal, fetchedAt));
 }
 
-async function fetchSnapshot(query: string, variables: Record<string, unknown>, fetcher: typeof fetch): Promise<{
+async function fetchSnapshot(query: string, variables: Record<string, unknown>, fetcher: typeof fetch, timeoutMs = 10_000): Promise<{
   proposals: SnapshotProposal[]; counts: { proposals: number; active: number; pending: number };
 }> {
   const url = new URL(SNAPSHOT_ENDPOINT);
@@ -132,12 +140,12 @@ async function fetchSnapshot(query: string, variables: Record<string, unknown>, 
   const response = await fetcher(url, {
     method: "GET",
     headers: { accept: "application/json", "user-agent": "QuorumX/0.3 (+https://quorumx.dev)" },
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`Snapshot request failed with HTTP ${response.status}`);
   const declaredLength = Number(response.headers.get("content-length") ?? "0");
   if (declaredLength > MAX_RESPONSE_BYTES) throw new Error("Snapshot response exceeded the size limit");
-  const text = await response.text();
-  if (text.length > MAX_RESPONSE_BYTES) throw new Error("Snapshot response exceeded the size limit");
+  const text = await boundedResponseText(response);
   const payload = JSON.parse(text) as SnapshotPayload;
   if (payload.errors?.length) throw new Error(`Snapshot query failed: ${payload.errors.map((error) => error.message ?? "unknown error").join("; ")}`);
   const fetchedAt = new Date();
@@ -167,7 +175,7 @@ export async function fetchOpenSnapshotProposalPage(
     }
   }`;
   const result = await fetchSnapshot(query, { spaces: [space], first, skip: boundedSkip }, fetcher);
-  return { proposals: result.proposals, first, skip: boundedSkip,
+  return { proposals: requireRequestedSpace(result.proposals, space), first, skip: boundedSkip,
     exhausted: result.counts.active < first && result.counts.pending < first };
 }
 
@@ -181,5 +189,20 @@ export async function fetchSnapshotProposalsByIds(
       id title body choices created start end state author space { id }
     }
   }`;
-  return (await fetchSnapshot(query, { spaces: [space], ids }, fetcher)).proposals;
+  return requireRequestedSpace((await fetchSnapshot(query, { spaces: [space], ids }, fetcher)).proposals, space);
+}
+
+export async function fetchClosedSnapshotBackfill(
+  space: string, now: Date, limit = 25, windowDays = 90, fetcher: typeof fetch = fetch,
+): Promise<SnapshotProposal[]> {
+  const first = Math.max(1, Math.min(limit, 25));
+  const days = Math.max(1, Math.min(windowDays, 90));
+  const fields = "id title body choices created start end state author space { id }";
+  const query = `query ClosedBackfill($spaces: [String!]!, $first: Int!) {
+    proposals(first: $first, where: { space_in: $spaces, state: \"closed\" }, orderBy: \"end\", orderDirection: desc) { ${fields} }
+  }`;
+  const proposals = requireRequestedSpace((await fetchSnapshot(query, { spaces: [space], first }, fetcher)).proposals, space);
+  const cutoff = now.getTime() - days * 86_400_000;
+  return proposals.filter((proposal) => proposal.status === "closed" && proposal.votingEndsAt !== undefined
+    && new Date(proposal.votingEndsAt).getTime() >= cutoff).slice(0, first);
 }

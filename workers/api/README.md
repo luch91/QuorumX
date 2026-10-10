@@ -10,13 +10,13 @@ Current endpoints:
 - `GET /v1/proposals` returns cursor-paginated proposals; filter with `status`, `space`, `source`, `dao`, `author`, `assessment`, and `ecosystem`.
 - `GET /v1/proposals/<canonical-id>` returns a proposal, latest revision, transaction, and assessment.
 - `GET /v1/assessments/<proposal-key>` returns an accepted assessment and GenLayer provenance.
-- `GET /v2/proposals/<canonical-id>/due-diligence` returns the latest accepted v2 findings, claims, evidence, execution map, unresolved questions, and transaction provenance when available.
+- `GET /v2/proposals/<canonical-id>/due-diligence` retains format 2 compatibility.
+- `GET /v3/proposals/<canonical-id>/due-diligence` returns the latest accepted evidence-backed assessment.
 
-The v2 route is versioned so v1 clients keep their original response semantics.
-The checked-in Worker configuration selects assessment version 2 and enables
-writes. Local `.env.example` remains write-disabled. V1 records and transactions
-remain inspectable. Apply every migration through
-`0010_runtime_privilege_matrix.sql` before deploying this Worker.
+The checked-in Worker configuration selects assessment format 3 and enables
+writes. Local `.env.example` remains write-disabled. Format 1 and 2 records remain
+inspectable. Apply every migration through `0013_bounded_format3_backfill.sql`
+before deploying this Worker.
 
 `GET /health/live` is dependency-free liveness. `GET /health/ready` reports
 database/source/queue readiness plus the public release attestation. See the
@@ -24,6 +24,16 @@ database/source/queue readiness plus the public release attestation. See the
 [release checklist](../../docs/RELEASE_CHECKLIST.md).
 
 `POST /internal/run` is an operations-only manual trigger protected by `QUORUMX_ADMIN_TOKEN`. The normal path is the cron: discover recent proposals from the allowlisted Balancer, SafeDAO, Arbitrum DAO, and ENS DAO Snapshot spaces; persist content-addressed revisions; apply per-source rolling 24-hour assessment budgets; atomically claim one eligible job; submit or recover its GenLayer transaction; and index readable matching contract state. Do not expose the admin token, signing key, or Neon connection string as a Worker variable or browser value.
+
+`POST /internal/backfill` uses the same admin authentication. Create a `dry-run`
+first, inspect its exact per-DAO report, then `start` that run ID. The endpoint
+also supports `pause`, `resume`, and `status`. Defaults are the latest 25 closed
+proposals per DAO within 90 days, capped at 100 total and four GenLayer
+backfill submissions globally per rolling 24 hours. When multiple runs are active,
+the strictest active run budget applies. Backfill activity does not consume the
+separate live-assessment allowance, and live/final-revision jobs always claim
+ahead of retrospective jobs. Pausing prevents new claims; transaction recovery
+for work already submitted continues.
 
 Required secrets are `QUORUMX_ADMIN_TOKEN` and `QUORUMX_GENLAYER_PRIVATE_KEY`. The funded signing account should carry only enough development GEN for bounded indexer activity.
 

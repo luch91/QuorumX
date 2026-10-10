@@ -1,4 +1,4 @@
-import { fetchOpenSnapshotProposalPage, fetchRecentSnapshotProposals, fetchSnapshotProposalsByIds, normalizeSnapshotProposal } from "../src/snapshot";
+import { fetchClosedSnapshotBackfill, fetchOpenSnapshotProposalPage, fetchRecentSnapshotProposals, fetchSnapshotProposalsByIds, normalizeSnapshotProposal } from "../src/snapshot";
 
 describe("Snapshot ingestion", () => {
   it("normalizes identity, dates, status, choices, and unique evidence links", () => {
@@ -91,5 +91,27 @@ describe("Snapshot ingestion", () => {
       return new Response(JSON.stringify({ data: { active: [], pending: [] } }));
     }) as typeof fetch;
     await fetchOpenSnapshotProposalPage("safe.eth", 10_050, fetcher, 50);
+  });
+
+  it("selects the intersection of the latest closed limit and age window", async () => {
+    const fetcher = jest.fn(async (input: URL | RequestInfo) => {
+      const variables = JSON.parse(new URL(String(input)).searchParams.get("variables")!);
+      expect(variables).toEqual({ spaces: ["safe.eth"], first: 25 });
+      return new Response(JSON.stringify({ data: { proposals: [
+        { id: "recent", title: "Recent", body: "Body", choices: [], state: "closed", end: 1791417600, created: 1790000000, author: "0x" + "1".repeat(40), space: { id: "safe.eth" } },
+        { id: "old", title: "Old", body: "Body", choices: [], state: "closed", end: 1770000000, created: 1760000000, author: "0x" + "1".repeat(40), space: { id: "safe.eth" } },
+      ] } }), { status: 200 });
+    }) as typeof fetch;
+    const proposals = await fetchClosedSnapshotBackfill("safe.eth", new Date("2026-10-09T00:00:00Z"), 25, 90, fetcher);
+    expect(proposals.map((proposal) => proposal.externalId)).toEqual(["recent"]);
+  });
+
+  it("rejects a closed-proposal response from a different Snapshot space", async () => {
+    const fetcher = jest.fn(async () => new Response(JSON.stringify({ data: { proposals: [{
+      id: "wrong-space", title: "Wrong", body: "Body", choices: [], state: "closed",
+      end: 1791417600, author: "0x" + "1".repeat(40), space: { id: "attacker.eth" },
+    }] } }))) as typeof fetch;
+    await expect(fetchClosedSnapshotBackfill("safe.eth", new Date("2026-10-09T00:00:00Z"), 25, 90, fetcher))
+      .rejects.toThrow("unexpected space");
   });
 });

@@ -6,7 +6,7 @@
 3. Provision a disposable database with `npm run test:organization:provision`,
    run the Postgres and browser/runtime workflows, and always tear it down.
 4. Confirm migrations are append-only, checksummed, and ordered through
-   `0012_due_diligence_v3_schema.sql`.
+   `0013_bounded_format3_backfill.sql`.
 5. Confirm the runtime role has no accepted-record update/delete, DDL, schema
    ownership, or broad administrative membership.
 6. Run the dependency audit and full-history secret scan.

@@ -124,6 +124,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
             indexedFrom: "submitted_transaction",
             assessmentRunId: job.assessmentRunId,
             assessmentSchemaVersion: job.assessmentSchemaVersion,
+            jobKind: job.jobKind,
           });
           result.transactionsRecovered += 1;
         } else if (transaction.state === "undetermined" || transaction.state === "reverted") {
@@ -244,6 +245,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
           revisionId: job.revisionId,
           assessment: existing,
           indexedFrom: "existing_contract_state",
+          jobKind: job.jobKind,
         });
       } else {
         const idempotencyKey = `qx:${job.revisionHash}`;

@@ -1,4 +1,4 @@
-import { claimAssessmentJob, nextSnapshotScanState } from "../src/database";
+import { claimAssessmentJob, createBackfillDryRun, nextSnapshotScanState } from "../src/database";
 
 describe("durable proposal coverage", () => {
   const initial = { generation: 1, skip: 0, newProposalCount: 0, stableSweepCount: 0,
@@ -31,10 +31,31 @@ describe("durable proposal coverage", () => {
     expect(sql).toContain("reserved_jobs.status = 'processing'");
     expect(client.query.mock.calls.map((call) => call[0]).join("\n")).toContain("for update\n    ");
     expect(sql).toContain("for update of candidate skip locked");
-    expect(sql.indexOf("candidate.attempt_count asc")).toBeLessThan(sql.indexOf("case proposals.status"));
+    expect(sql.indexOf("candidate.job_kind")).toBeLessThan(sql.indexOf("candidate.attempt_count asc"));
+    expect(sql).toContain("backfill_runs.status = 'running'");
+    expect(sql).toContain("daily_submission_budget");
+    expect(sql).toContain("backfill_usage");
+    expect(sql).toContain("backfill_usage.submitted_count + backfill_usage.reserved_count");
+    expect(sql).toContain("select min(daily_submission_budget)");
+    expect(sql).toContain("submitted_jobs.job_kind = 'live'");
+    expect(sql).toContain("reserved_jobs.job_kind = 'live'");
+    expect(sql.indexOf("case proposals.status")).toBeLessThan(sql.indexOf("candidate.attempt_count asc"));
     expect(sql).toContain("case proposals.status when 'active' then 0 when 'pending' then 1 else 2 end");
     expect(sql).toContain("proposals.voting_ends_at asc nulls last");
     expect(sql).toContain("revisions.created_at asc");
     expect(sql).toContain("candidate.id asc");
+  });
+
+  it("reports pre-existing accepted format 3 records as skipped", async () => {
+    const client = { query: jest.fn()
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rows: [{ id: "9" }] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({}) };
+    await createBackfillDryRun(client as never, [{ dao: "SafeDAO", canonicalId: "snapshot:safe.eth:p1" }],
+      { perDaoLimit: 25, totalLimit: 100, windowDays: 90, dailySubmissionBudget: 4 });
+    const sql = client.query.mock.calls[2][0];
+    expect(sql).toContain("then 'skipped'");
+    expect(sql).toContain("then 'existing_format3_assessment'");
   });
 });

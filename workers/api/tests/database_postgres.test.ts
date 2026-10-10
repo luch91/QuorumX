@@ -1,5 +1,5 @@
 import { Client } from "pg";
-import { claimAssessmentJob, ingestSnapshotProposals } from "../src/database";
+import { claimAssessmentJob, createBackfillDryRun, getBackfillRun, ingestSnapshotProposals, startBackfillRun } from "../src/database";
 import { snapshotSourceForSpace } from "../src/sources";
 import type { SnapshotProposal } from "../src/domain";
 
@@ -98,5 +98,58 @@ integration("PostgreSQL proposal coverage", () => {
     expect((await client.query("select count(*)::integer as count from quorumx.proposals where canonical_id like $1",
       [`snapshot:${space}:coverage-%`])).rows[0].count).toBe(125);
     expect(await claimAssessmentJob(client, `capacity-zero-${space}`, "3", "3.3")).toBeUndefined();
+  });
+
+  it("persists one exact retrospective revision and starts it idempotently", async () => {
+    await client.query("delete from quorumx.proposals where canonical_id like 'snapshot:safe.eth:coverage-%'");
+    const canonicalId = `snapshot:safe.eth:backfill-${Date.now()}`;
+    const externalId = canonicalId.split(":").at(-1)!;
+    const source = snapshotSourceForSpace("safe.eth");
+    await ingestSnapshotProposals(client, source, [{
+      externalId, canonicalId, source: { kind: "snapshot", space: "safe.eth", proposalId: externalId },
+      authorAddress: "0x3333333333333333333333333333333333333333",
+      canonicalUrl: `https://snapshot.box/#/s:safe.eth/proposal/${externalId}`,
+      title: "Backfill integration", bodyText: "Closed proposal", choices: ["For", "Against"],
+      linkedEvidenceUrls: [], status: "closed", votingEndsAt: "2026-10-08T00:00:00.000Z",
+      assessmentEligible: false,
+    }], new Date("2026-10-09T00:00:00.000Z"), "3", "3.3");
+    const runId = await createBackfillDryRun(client, [{ dao: "SafeDAO", canonicalId }],
+      { perDaoLimit: 25, totalLimit: 100, windowDays: 90, dailySubmissionBudget: 4 });
+    expect((await getBackfillRun(client, runId))?.candidates).toEqual([expect.objectContaining({
+      dao: "SafeDAO", state: "eligible", canonicalId,
+    })]);
+    expect(await startBackfillRun(client, runId)).toBe(true);
+    expect(await startBackfillRun(client, runId)).toBe(false);
+    const jobs = await client.query(`select count(*)::integer as count from quorumx.assessment_jobs
+      where backfill_run_id = $1 and assessment_schema_version = '3.3'`, [runId]);
+    expect(jobs.rows[0].count).toBe(1);
+    expect((await getBackfillRun(client, runId))?.candidates).toEqual([expect.objectContaining({
+      dao: "SafeDAO", state: "queued", canonicalId,
+    })]);
+
+    const backfillJob = await client.query<{ id: string }>(
+      "select id::text from quorumx.assessment_jobs where backfill_run_id = $1", [runId]);
+    await client.query("update quorumx.assessment_jobs set status = 'finalized' where id = $1", [backfillJob.rows[0].id]);
+    await client.query(`insert into quorumx.transactions
+      (job_id, network, contract_address, transaction_hash, state, submitted_at)
+      values ($1, 'test', $2, $3, 'accepted', now())`, [backfillJob.rows[0].id, `0x${"4".repeat(40)}`, `0x${Date.now().toString(16).padStart(64, "0")}`]);
+
+    const liveCanonicalId = `${canonicalId}-live`;
+    await ingestSnapshotProposals(client, source, [{
+      externalId: `${externalId}-live`, canonicalId: liveCanonicalId,
+      source: { kind: "snapshot", space: "safe.eth", proposalId: `${externalId}-live` },
+      authorAddress: "0x3333333333333333333333333333333333333333",
+      canonicalUrl: `https://snapshot.box/#/s:safe.eth/proposal/${externalId}-live`,
+      title: "Live priority", bodyText: "Active proposal", choices: ["For", "Against"],
+      linkedEvidenceUrls: [], status: "active", votingEndsAt: "2026-10-11T00:00:00.000Z",
+      assessmentEligible: true,
+    }], new Date("2026-10-09T00:00:00.000Z"), "3", "3.3");
+    expect((await claimAssessmentJob(client, "live-after-backfill", "3", "3.3"))?.proposalKey).toBe(liveCanonicalId);
+
+    await client.query("delete from quorumx.backfill_candidates where run_id = $1", [runId]);
+    await client.query("delete from quorumx.assessment_jobs where backfill_run_id = $1", [runId]);
+    await client.query("delete from quorumx.backfill_runs where id = $1", [runId]);
+    await client.query("delete from quorumx.proposals where canonical_id = $1", [canonicalId]);
+    await client.query("delete from quorumx.proposals where canonical_id = $1", [liveCanonicalId]);
   });
 });
