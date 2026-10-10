@@ -31,10 +31,15 @@ Keep the v1 address unchanged for historical records.
 
 ## Current implementation: format 3
 
-The immutable format 3 contract is deployed on Studionet at
-`0xf183c38364Bc92726E54d3639a6c4f8d107630c7` (deployment transaction
-`0x600796d8eafe99df247004bd8f400b531884894adef8de540409b3bb4befdb50`).
-The deployment finalized with successful GenVM execution. The bounded BIP-930
+The current immutable format 3 contract is deployed on Studionet at
+`0x319e020B2cf81a5c1D7E6d8F831B8F0c531ea860` (deployment transaction
+`0x8db0a0e5be933c1fb025e1a8431b1d60eb912a86b543ed13cf12700320da12ae`).
+It replaces `0xf183c38364Bc92726E54d3639a6c4f8d107630c7` (deployment
+transaction `0x600796d8eafe99df247004bd8f400b531884894adef8de540409b3bb4befdb50`)
+only for the long-proposal passage-boundary correction: complete canonical
+material remains capped at 24 KB, while dense line formatting no longer rejects
+otherwise admissible material. The previous address and all records it accepted
+remain historical and immutable. The bounded BIP-930
 assessment transaction
 `0xf23151d9a28c76d39b0a189dc30cd716a777da7c2b13fcbfbbacf5207bdb5d29`
 also finalized with successful leader and participating-validator execution,
