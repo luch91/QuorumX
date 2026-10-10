@@ -42,7 +42,8 @@ do
 done
 
 if ! gltest contracts/genlayer_localnet_tests/test_v3_3_release_localnet.py \
-  contracts/genlayer_localnet_tests/test_decision_ir_v3_4_localnet.py -v -s \
+  contracts/genlayer_localnet_tests/test_decision_ir_v3_4_localnet.py \
+  contracts/genlayer_localnet_tests/test_evidence_planner_v3_4_localnet.py -v -s \
   --rpc-url http://127.0.0.1:4012/api \
   --chain-type localnet; then
   cat /tmp/quorumx-glsim.log
