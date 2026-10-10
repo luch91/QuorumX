@@ -126,6 +126,16 @@ describe("due diligence v2 boundary", () => {
     expect(changes.find((change) => change.field === "Material claim text")).toBeDefined();
   });
 
+  it("classifies asset and safeguard changes in decision-relevant action context", () => {
+    const changes = revisionChanges(
+      { bodyText: "Transfer 3M ARB to the Grants Safe. Timelock and clawback apply." },
+      { bodyText: "Transfer 3M USDC to the Grants Safe. No clawback will apply." },
+    );
+    expect(changes.map((change) => change.field)).toEqual(expect.arrayContaining([
+      "Treasury asset", "Safeguard language", "Clawback language",
+    ]));
+  });
+
   it("uses the material revision fixture to identify changes without asserting absent safeguards", () => {
     const fixturePath = (name: string) => resolve(process.cwd(), "fixtures/due_diligence_v3", name);
     const before = JSON.parse(readFileSync(fixturePath("semantic_revision_previous.json"), "utf8"));

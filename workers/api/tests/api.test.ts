@@ -1,4 +1,4 @@
-import { getDueDiligenceV3, listProposals, listSources } from "../src/api";
+import { getDueDiligenceV3, getProposal, listProposals, listSources } from "../src/api";
 
 describe("source coverage API", () => {
   it("exposes fixed-point scan progress and durable assessment backlog", async () => {
@@ -90,5 +90,20 @@ describe("versioned due diligence reads", () => {
       ["snapshot:safe.eth:p1", "3.2"]);
     await expect(getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "latest"))
       .rejects.toThrow("invalid_assessment_schema");
+  });
+});
+
+describe("proposal revision intelligence API", () => {
+  it("returns immutable claim lineage from revision observations without a new schema", async () => {
+    const current = { id: "9", currentRevisionPayload: { bodyText: "Monthly active users reached 200k." }, previousRevisionPayload: { bodyText: "The protocol has 120,000 monthly active users." } };
+    const history = [
+      { id: "1", observedAt: "2026-01-01T00:00:00Z", payload: current.previousRevisionPayload, assessment: { materialClaims: [{ claim: "The protocol has 120,000 monthly active users.", claimScope: "external_factual", status: "unverified", evidence: ["proposal"] }] } },
+      { id: "2", observedAt: "2026-01-02T00:00:00Z", payload: current.currentRevisionPayload, assessment: { materialClaims: [{ claim: "Monthly active users reached 200k.", claimScope: "external_factual", status: "supported", evidence: ["proposal", "safe"] }] } },
+    ];
+    const client = { query: jest.fn().mockResolvedValueOnce({ rows: [current] }).mockResolvedValueOnce({ rows: history }) };
+    const result = await getProposal(client as never, "snapshot:safe.eth:p1") as { revisionIntelligence: Array<{ changes: Array<{ kind: string }> }> };
+    expect(client.query.mock.calls[1][0]).toContain("proposal_revision_observations");
+    expect(client.query.mock.calls[1][1]).toEqual(["9"]);
+    expect(result.revisionIntelligence[0].changes).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "claim_status" })]));
   });
 });
