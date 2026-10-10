@@ -815,12 +815,22 @@ export async function recordSubmittedTransaction(
 ): Promise<void> {
   await client.query("begin");
   try {
-    await client.query(`
+    const inserted = await client.query<{ job_id: string; state: string }>(`
       insert into quorumx.transactions (
         job_id, network, contract_address, transaction_hash, state, evidence, submitted_at, created_at, updated_at
       ) values ($1, $2, $3, $4, 'submitted', jsonb_build_object('source', $5::text), now(), now(), now())
       on conflict (transaction_hash) do nothing
+      returning job_id::text, state
     `, [job.id, network, contractAddress, transactionHash, "automatic_indexer"]);
+    const transaction = inserted.rows[0] ?? (await client.query<{ job_id: string; state: string }>(`
+      select job_id::text, state
+      from quorumx.transactions
+      where transaction_hash = $1
+      for share
+    `, [transactionHash])).rows[0];
+    if (!transaction || transaction.job_id !== job.id || transaction.state !== "submitted") {
+      throw new Error("submission transaction is not a viable active attempt");
+    }
     await client.query(`
       update quorumx.submission_intents
       set state = 'recorded', transaction_hash = $2, updated_at = now()
@@ -852,22 +862,98 @@ export async function deferSubmittedPoll(client: Client, job: SubmittedJob): Pro
 
 export async function prepareSubmissionIntent(
   client: Client, job: ClaimedJob, idempotencyKey: string,
-): Promise<{ created: boolean; state: string; transactionHash?: string }> {
-  const result = await client.query<{ created: boolean; state: string; transaction_hash: string | null }>(`
-    with inserted as (
+): Promise<{ created: boolean; state: string; transactionHash?: string; retryRearmed?: boolean }> {
+  const result = await client.query<{
+    created: boolean; state: string; transaction_hash: string | null; retry_rearmed: boolean;
+  }>(`
+    with rearmed as (
+      update quorumx.submission_intents intents
+      set state = 'prepared', transaction_hash = null, updated_at = now()
+      from quorumx.assessment_jobs jobs
+      where intents.job_id = $1
+        and intents.idempotency_key = $2
+        and jobs.id = intents.job_id
+        and jobs.status = 'processing'
+        and jobs.attempt_count < jobs.max_attempts
+        and exists (
+          select 1 from quorumx.transactions transactions
+          where transactions.job_id = intents.job_id
+            and transactions.transaction_hash = intents.transaction_hash
+            and transactions.state = 'reverted'
+        )
+      returning false as created, intents.state, intents.transaction_hash, true as retry_rearmed
+    ),
+    inserted as (
       insert into quorumx.submission_intents (job_id, idempotency_key)
       values ($1, $2)
       on conflict (job_id) do nothing
-      returning true as created, state, transaction_hash
+      returning true as created, state, transaction_hash, false as retry_rearmed
     )
-    select created, state, transaction_hash from inserted
+    select created, state, transaction_hash, retry_rearmed from rearmed
     union all
-    select false, state, transaction_hash from quorumx.submission_intents
-    where job_id = $1 and not exists (select 1 from inserted)
+    select created, state, transaction_hash, retry_rearmed from inserted
+    union all
+    select false, state, transaction_hash, false from quorumx.submission_intents
+    where job_id = $1 and not exists (select 1 from rearmed) and not exists (select 1 from inserted)
     limit 1
   `, [job.id, idempotencyKey]);
   return { created: result.rows[0].created, state: result.rows[0].state, ...(result.rows[0].transaction_hash
-    ? { transactionHash: result.rows[0].transaction_hash } : {}) };
+    ? { transactionHash: result.rows[0].transaction_hash } : {}), ...(result.rows[0].retry_rearmed
+    ? { retryRearmed: true } : {}) };
+}
+
+/**
+ * Repairs the only safe stranded-submission shape: a submitted job whose most
+ * recent transaction is definitively reverted and which has no active
+ * submitted transaction. Undetermined attempts deliberately remain untouched.
+ */
+export async function repairStrandedSubmittedJobs(client: Client, limit = 5): Promise<number> {
+  await client.query("begin");
+  try {
+    const repaired = await client.query<{ job_id: string; retryable: boolean; job_kind: "live" | "backfill" }>(`
+      with stranded as (
+        select jobs.id, jobs.attempt_count, jobs.max_attempts, jobs.job_kind
+        from quorumx.assessment_jobs jobs
+        join lateral (
+          select state from quorumx.transactions
+          where job_id = jobs.id
+          order by submitted_at desc, id desc
+          limit 1
+        ) latest on true
+        where jobs.status = 'submitted'
+          and jobs.assessment_version = '3'
+          and latest.state = 'reverted'
+          and not exists (
+            select 1 from quorumx.transactions active
+            where active.job_id = jobs.id and active.state = 'submitted'
+          )
+        order by jobs.updated_at asc, jobs.id asc
+        limit $1
+        for update of jobs skip locked
+      ), updated as (
+        update quorumx.assessment_jobs jobs
+        set status = case when stranded.attempt_count < stranded.max_attempts then 'retryable' else 'dead_letter' end,
+            available_at = case when stranded.attempt_count < stranded.max_attempts then now() else available_at end,
+            completed_at = case when stranded.attempt_count < stranded.max_attempts then null else now() end,
+            locked_at = null, locked_by = null, lease_expires_at = null,
+            last_error = case when stranded.attempt_count < stranded.max_attempts
+              then 'repaired_reverted_submission' else 'reverted_submission_attempts_exhausted' end,
+            updated_at = now()
+        from stranded
+        where jobs.id = stranded.id
+        returning jobs.id::text as job_id, stranded.attempt_count < stranded.max_attempts as retryable, stranded.job_kind
+      )
+      select * from updated
+    `, [Math.max(1, Math.min(limit, 20))]);
+    for (const job of repaired.rows) {
+      if (job.job_kind === "backfill") await settleBackfillCandidate(client, job.job_id, job.retryable ? "retrying" : "failed");
+    }
+    await client.query("commit");
+    return repaired.rows.length;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
 }
 
 export async function markSubmissionUncertain(client: Client, job: ClaimedJob): Promise<void> {
