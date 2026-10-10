@@ -98,7 +98,7 @@ def test_v34_semantic_extraction_rejects_a_different_valid_validator_ir(direct_v
     assert direct_vm.run_validator() is False
 
 
-def test_v34_normalization_rejects_ungrounded_candidate_in_genvm(direct_deploy):
+def test_v34_normalization_downgrades_ungrounded_candidate_field_in_genvm(direct_deploy):
     contract = direct_deploy(
         "contracts/decision_ir_v3_4.py",
         sdk_version=GENVM_SDK_VERSION,
@@ -106,5 +106,7 @@ def test_v34_normalization_rejects_ungrounded_candidate_in_genvm(direct_deploy):
     ungrounded = candidate()
     ungrounded["actions"][0]["recipient"] = "Other DAO"
 
-    with pytest.raises(Exception):
-        contract.normalize_candidate(MATERIAL, json.dumps(ungrounded))
+    result = json.loads(contract.normalize_candidate(MATERIAL, json.dumps(ungrounded)))
+
+    assert result["actions"][0]["recipient"] is None
+    assert result["grounding"]["actions"][0]["state"] == "partially_grounded"

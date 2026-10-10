@@ -22,6 +22,7 @@ def load_module():
 MODULE = load_module()
 canonical_decision_ir = MODULE.canonical_decision_ir
 normalize_decision_ir = MODULE.normalize_decision_ir
+ground_decision_ir = MODULE.ground_decision_ir
 
 
 FIXTURE = json.loads((Path(__file__).parents[2] / "fixtures" / "decision_ir" / "bip_933.json").read_text(encoding="utf-8"))
@@ -113,3 +114,107 @@ def test_signaling_has_no_executable_action_and_unknowns_remain_unknown():
         "executionConsequences": [], "unknowns": [{"id": "authority", "subject": "on-chain actions", "state": "unknown", "sourceExcerpt": "This proposal will not require an on-chain vote because there are no on-chain actions to be taken."}], "evidenceReferences": []}, material)
     assert result["actions"] == []
     assert result["unknowns"][0]["state"] == "unknown"
+
+
+def test_grounding_removes_invented_recipient_amount_and_token():
+    material = "The DAO multisig will call claimFees(FeeDistributor, USDC, DAO, 0)."
+    raw = {"proposalObjective": "Recover fees.", "actions": [{
+        "id": "claim", "operation": "token_claim", "actor": "DAO multisig", "function": "claimFees",
+        "arguments": ["FeeDistributor", "USDC", "DAO", "0"], "asset": "DAI", "amount": "10,000",
+        "recipient": "External wallet", "contract": "0x9999999999999999999999999999999999999999", "conditions": [], "dependencies": [], "sourceExcerpt": material,
+    }], "claims": [], "safeguards": [], "executionConsequences": [], "unknowns": [], "evidenceReferences": []}
+
+    result = ground_decision_ir(raw, material)
+
+    action = result["actions"][0]
+    assert action["asset"] is None
+    assert action["amount"] is None
+    assert action["recipient"] is None
+    assert action["contract"] is None
+    fields = {entry["field"]: entry["state"] for entry in result["grounding"]["actions"][0]["fields"]}
+    assert fields["asset"] == "unresolved"
+    assert fields["amount"] == "unresolved"
+    assert fields["recipient"] == "unresolved"
+    assert fields["contract"] == "unresolved"
+    assert result["grounding"]["actions"][0]["state"] == "partially_grounded"
+
+
+def test_grounding_drops_heading_only_and_explicitly_negated_actions():
+    material = "# Transfer 5,000 USDC\n\nNo transfer will be executed by this proposal."
+    raw = {"proposalObjective": "Discuss a transfer.", "actions": [{
+        "id": "transfer", "operation": "treasury_transfer", "asset": "USDC", "amount": "5,000", "conditions": [], "dependencies": [], "sourceExcerpt": "# Transfer 5,000 USDC",
+    }], "claims": [], "safeguards": [], "executionConsequences": [], "unknowns": [], "evidenceReferences": []}
+
+    result = ground_decision_ir(raw, material)
+
+    assert result["actions"] == []
+    assert result["grounding"]["actions"] == [{"id": "transfer", "state": "unresolved", "retained": False, "fields": []}]
+
+
+def test_grounding_drops_an_action_supported_only_by_a_heading():
+    material = "# Claim 500 USDC\n\nDiscussion only."
+    raw = {"proposalObjective": "Discuss a claim.", "actions": [{
+        "id": "heading-claim", "operation": "token_claim", "asset": "USDC", "amount": "500", "conditions": [], "dependencies": [], "sourceExcerpt": "# Claim 500 USDC",
+    }], "claims": [], "safeguards": [], "executionConsequences": [], "unknowns": [], "evidenceReferences": []}
+
+    result = ground_decision_ir(raw, material)
+
+    assert result["actions"] == []
+    assert result["grounding"]["actions"][0]["retained"] is False
+
+
+def test_grounding_handles_ambiguous_actor_but_retains_explicit_contract_call_parameters():
+    material = "An authorized signer may call setFee(500) on FeeController."
+    raw = {"proposalObjective": "Set a fee.", "actions": [{
+        "id": "fee", "operation": "parameter_change", "actor": "DAO multisig", "contract": "FeeController",
+        "function": "setFee", "arguments": ["500"], "conditions": [], "dependencies": [], "sourceExcerpt": material,
+    }], "claims": [], "safeguards": [], "executionConsequences": [], "unknowns": [], "evidenceReferences": []}
+
+    result = ground_decision_ir(raw, material)
+
+    action = result["actions"][0]
+    assert action["actor"] is None
+    assert action["contract"] == "FeeController"
+    assert action["function"] == "setFee"
+    assert action["arguments"] == ["500"]
+    assert result["grounding"]["actions"][0]["state"] == "partially_grounded"
+
+
+def test_bip_933_grounding_retains_each_supported_decision_field():
+    result = ground_decision_ir(bip_response(), FIXTURE["body"])
+
+    action = result["actions"][0]
+    assert {field: action[field] for field in ("actor", "function", "asset", "recipient", "frequency", "amount")} == {
+        "actor": "DAO multisig", "function": "claimFees", "asset": "USDC", "recipient": "DAO", "frequency": "4 calls", "amount": "approximately 10,286.807445",
+    }
+    assert result["grounding"]["actions"][0]["state"] == "grounded"
+
+
+def test_grounding_retains_multiple_independently_supported_actions():
+    fixture = json.loads((Path(__file__).parents[2] / "fixtures" / "decision_ir" / "safe_sep56.json").read_text(encoding="utf-8"))
+    material = fixture["bodyExcerpt"]
+    raw = {"proposalObjective": "Fund Safenet Aegis.", "actions": [
+        {"id": "rewards", "operation": "grant_or_funding", "actor": "SafeDAO", "asset": "SAFE", "amount": "~5,000,000 SAFE", "conditions": [], "dependencies": ["validator staking rewards"], "sourceExcerpt": material},
+        {"id": "grants", "operation": "grant_or_funding", "actor": "SafeDAO", "asset": "SAFE", "amount": "~2,400,000 SAFE", "conditions": ["milestone-based grants"], "dependencies": [], "sourceExcerpt": material},
+    ], "claims": [], "safeguards": [], "executionConsequences": [], "unknowns": [], "evidenceReferences": []}
+
+    result = ground_decision_ir(raw, material)
+
+    assert [action["id"] for action in result["actions"]] == ["grants", "rewards"]
+    assert [entry["state"] for entry in result["grounding"]["actions"]] == ["grounded", "grounded"]
+
+
+def test_grounding_preserves_a_decision_bearing_action_near_the_end_of_bounded_material():
+    filler = "\n".join("Context line %03d" % index for index in range(220))
+    action_source = "The DAO multisig will call claimFees(FeeDistributor, USDC, DAO, 0) four times."
+    material = filler + "\n" + action_source
+    raw = {"proposalObjective": "Recover USDC.", "actions": [{
+        "id": "late-claim", "operation": "token_claim", "actor": "DAO multisig", "function": "claimFees",
+        "arguments": ["FeeDistributor", "USDC", "DAO", "0"], "asset": "USDC", "recipient": "DAO", "frequency": "4 calls",
+        "conditions": [], "dependencies": [], "sourceExcerpt": action_source,
+    }], "claims": [], "safeguards": [], "executionConsequences": [], "unknowns": [], "evidenceReferences": []}
+
+    result = ground_decision_ir(raw, material)
+
+    assert result["actions"][0]["id"] == "late-claim"
+    assert result["grounding"]["actions"][0]["state"] == "grounded"

@@ -76,6 +76,19 @@ describe("Decision IR schema 3.4", () => {
     expect(() => createDecisionIR({ ...bip933(), actions: Array.from({ length: 17 }, (_, index) => ({ ...action, id: `action-${index}` })) })).toThrow("Invalid Decision IR action");
   });
 
+  test("serializes an additive deterministic grounding report", () => {
+    const grounded = createDecisionIR({ ...bip933(), grounding: {
+      proposalObjective: "unresolved",
+      actions: [{ id: "action-claim-fees", state: "grounded", retained: true, fields: [
+        { field: "asset", state: "grounded" },
+        { field: "recipient", state: "grounded" },
+      ] }],
+    } });
+    expect(JSON.parse(serializeDecisionIR(grounded)).grounding.actions[0]).toMatchObject({
+      id: "action-claim-fees", state: "grounded", retained: true,
+    });
+  });
+
   test("does not change schema 3.3 type compatibility", () => {
     const legacy: Pick<StoredDueDiligenceV3Assessment, "assessmentVersion" | "assessmentSchemaVersion" | "proposalKey"> = { assessmentVersion: "3", assessmentSchemaVersion: "3.3", proposalKey: "snapshot:dao.eth:legacy" };
     expect(contractCanonicalJson(legacy)).toContain('"assessmentSchemaVersion":"3.3"');
