@@ -102,9 +102,19 @@ export async function findSubmittedTransaction(
       return decoded.includes(idempotencyKey) && decoded.includes("assess");
     } catch { return false; }
   });
-  if (matches.length > 1) throw new Error("Multiple GenLayer transactions match the submission intent");
-  const hash = matches[0]?.hash;
-  return typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash) ? hash : undefined;
+  // A retry deliberately reuses a stable assessment run ID. Bound the scan and
+  // classify each matching attempt: definitively reverted predecessors are
+  // historical audit records, not recoverable active submissions.
+  if (matches.length > 8) throw new Error("Too many GenLayer transactions match the submission intent");
+  const viable: string[] = [];
+  for (const match of matches) {
+    const hash = match.hash;
+    if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) continue;
+    const state = classifyTransaction(await client.getTransaction({ hash: hash as TransactionHash }));
+    if (state.state === "pending" || state.state === "accepted") viable.push(hash);
+  }
+  if (viable.length > 1) throw new Error("Multiple viable GenLayer transactions match the submission intent");
+  return viable[0];
 }
 
 function clientFor(settings: GenLayerSettings) {

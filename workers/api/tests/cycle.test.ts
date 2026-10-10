@@ -12,6 +12,7 @@ jest.mock("../src/database", () => ({
   markSubmittedTerminal: jest.fn(),
   quarantineSubmittedAssessment: jest.fn(),
   prepareSubmissionIntent: jest.fn().mockResolvedValue({ created: true, state: "prepared" }),
+  repairStrandedSubmittedJobs: jest.fn().mockResolvedValue(0),
   markSubmissionUncertain: jest.fn(),
   recordSourceFailure: jest.fn(),
   recordSubmittedTransaction: jest.fn(),
@@ -43,11 +44,12 @@ import {
   recordSubmittedTransaction,
   quarantineSubmittedAssessment,
   prepareSubmissionIntent,
+  repairStrandedSubmittedJobs,
   markSubmissionUncertain,
 } from "../src/database";
 import { DueDiligenceBoundaryError } from "../src/due_diligence";
 import { runIndexerCycle } from "../src/cycle";
-import { findSubmittedTransaction, getTransactionState, readAssessment, readDueDiligence, readDueDiligenceV3, submitAssessment, submitDueDiligence } from "../src/genlayer";
+import { findSubmittedTransaction, getTransactionState, readAssessment, readDueDiligence, readDueDiligenceV3, submitAssessment, submitDueDiligence, submitDueDiligenceV3 } from "../src/genlayer";
 import { fetchOpenSnapshotProposalPage, fetchSnapshotProposalsByIds } from "../src/snapshot";
 import type { StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "../src/domain";
 import { contractCanonicalJson, sha256 } from "../src/canonical";
@@ -95,6 +97,7 @@ describe("indexer cycle", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(listSubmittedJobs).mockResolvedValue([]);
+    jest.mocked(repairStrandedSubmittedJobs).mockResolvedValue(0);
     jest.mocked(recordSourceFailure).mockResolvedValue();
     jest.mocked(getSnapshotScanState).mockResolvedValue({ generation: 1, skip: 0, newProposalCount: 0, stableSweepCount: 0, sweepFingerprint: "", coverage: "scanning", reconciliationOffset: 0 });
     jest.mocked(fetchOpenSnapshotProposalPage).mockResolvedValue({ proposals: [], first: 20, skip: 0, exhausted: true });
@@ -218,6 +221,34 @@ describe("indexer cycle", () => {
     expect(recordSubmittedTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), recoveredHash,
       "studionet", configured.genlayer.dueDiligenceContractAddress);
     expect(result.transactionsRecovered).toBe(1);
+  });
+
+  it("submits a fresh Format 3 attempt after a definitively reverted attempt is rearmed", async () => {
+    const freshHash = `0x${"b".repeat(64)}`;
+    const v3Address = "0x3333333333333333333333333333333333333333" as const;
+    jest.mocked(claimAssessmentJob).mockResolvedValue({
+      ...job,
+      assessmentVersion: "3",
+      assessmentSchemaVersion: "3.3",
+      assessmentRunId: "backfill:3.3:1:1644",
+      jobKind: "backfill",
+    });
+    // A database rearm retains the intent row for audit/idempotency, but makes a
+    // new attempt explicitly eligible after the recorded transaction reverted.
+    jest.mocked(prepareSubmissionIntent).mockResolvedValueOnce({
+      created: false,
+      state: "prepared",
+      retryRearmed: true,
+    });
+    jest.mocked(submitDueDiligenceV3).mockResolvedValueOnce(freshHash);
+
+    await runIndexerCycle({ ...settings, assessmentVersion: "3", assessmentSchemaVersion: "3.3",
+      genlayer: { ...settings.genlayer, dueDiligenceV3ContractAddress: v3Address } });
+
+    expect(findSubmittedTransaction).not.toHaveBeenCalled();
+    expect(submitDueDiligenceV3).toHaveBeenCalledWith(expect.anything(), job.source, "backfill:3.3:1:1644");
+    expect(recordSubmittedTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), freshHash,
+      "studionet", v3Address);
   });
 
   it("claims only jobs for the enabled assessment version", async () => {

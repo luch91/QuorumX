@@ -13,6 +13,7 @@ import {
   markSubmissionUncertain,
   quarantineSubmittedAssessment,
   prepareSubmissionIntent,
+  repairStrandedSubmittedJobs,
   recordSourceFailure,
   recordSubmittedTransaction,
   withDatabase,
@@ -75,6 +76,10 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
   };
 
   await withDatabase(settings.databaseUrl, async (client) => {
+    // A reverted transaction is final, but older releases could leave its job
+    // submitted. Repair only that explicit, auditable state before polling or
+    // claiming work; undetermined transactions remain quarantined.
+    await repairStrandedSubmittedJobs(client);
     const submitted = await listSubmittedJobs(client);
     for (const job of submitted) {
       if (job.assessmentVersion === "2" && !job.contractAddress && !settings.genlayer.dueDiligenceContractAddress) continue;
@@ -222,7 +227,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
         const assessmentRunId = job.assessmentRunId ?? `qx:v3:${job.revisionHash}`;
         const contractAddress = settings.genlayer.dueDiligenceContracts?.["3.3"] ?? settings.genlayer.dueDiligenceV3ContractAddress!;
         const intent = await prepareSubmissionIntent(client, job, assessmentRunId);
-        if (!intent.created) {
+        if (!intent.created && !intent.retryRearmed) {
           const recovered = await within(findSubmittedTransaction(settings.genlayer, assessmentRunId, contractAddress), callTimeout, "submission_reconcile");
           if (recovered) {
             await recordSubmittedTransaction(client, job, recovered, "studionet", contractAddress);
