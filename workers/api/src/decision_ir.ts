@@ -60,6 +60,25 @@ export interface DecisionEvidenceReference {
   sourceExcerpt: string;
 }
 
+export type DecisionGroundingState = "grounded" | "partially_grounded" | "unresolved";
+
+export interface DecisionGroundingField {
+  field: string;
+  state: "grounded" | "unresolved";
+}
+
+export interface DecisionActionGrounding {
+  id: string;
+  state: DecisionGroundingState;
+  retained: boolean;
+  fields: DecisionGroundingField[];
+}
+
+export interface DecisionGrounding {
+  proposalObjective: "grounded" | "unresolved";
+  actions: DecisionActionGrounding[];
+}
+
 export interface DecisionIR {
   schemaVersion: typeof DECISION_IR_SCHEMA_VERSION;
   proposalObjective: string;
@@ -69,6 +88,7 @@ export interface DecisionIR {
   executionConsequences: DecisionConsequence[];
   unknowns: DecisionUnknown[];
   evidenceReferences: DecisionEvidenceReference[];
+  grounding?: DecisionGrounding;
 }
 
 const MAX_ITEMS = 16;
@@ -96,6 +116,24 @@ function unique<T extends { id: string }>(items: T[], field: string): T[] {
     ids.add(item.id);
   }
   return [...items].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function grounding(value: DecisionGrounding | undefined): DecisionGrounding | undefined {
+  if (value === undefined) return undefined;
+  if (!value || !["grounded", "unresolved"].includes(value.proposalObjective)) throw new Error("Invalid Decision IR grounding");
+  const actions = unique(value.actions, "grounding action").map((action) => {
+    if (!["grounded", "partially_grounded", "unresolved"].includes(action.state) || typeof action.retained !== "boolean") {
+      throw new Error("Invalid Decision IR grounding action");
+    }
+    if (!Array.isArray(action.fields) || action.fields.length > 16) throw new Error("Invalid Decision IR grounding fields");
+    const fields = [...action.fields].map((field) => {
+      if (!["grounded", "unresolved"].includes(field.state)) throw new Error("Invalid Decision IR grounding field");
+      return { field: text(field.field, "grounding field", 80)!, state: field.state };
+    }).sort((left, right) => left.field.localeCompare(right.field));
+    if (new Set(fields.map((field) => field.field)).size !== fields.length) throw new Error("Duplicate Decision IR grounding field");
+    return { id: text(action.id, "grounding action ID", 80)!, state: action.state, retained: action.retained, fields };
+  });
+  return { proposalObjective: value.proposalObjective, actions };
 }
 
 export function createDecisionIR(input: DecisionIR): DecisionIR {
@@ -134,7 +172,9 @@ export function createDecisionIR(input: DecisionIR): DecisionIR {
     return { id: text(reference.id, "evidence reference ID", 80)!, type: reference.type,
       locator: text(reference.locator, "evidence locator", MAX_TEXT)!, sourceExcerpt: text(reference.sourceExcerpt, "evidence source excerpt", MAX_EXCERPT)! };
   });
-  return { schemaVersion: DECISION_IR_SCHEMA_VERSION, proposalObjective: text(input.proposalObjective, "proposal objective")!, actions, claims, safeguards, executionConsequences, unknowns, evidenceReferences };
+  const normalizedGrounding = grounding(input.grounding);
+  return { schemaVersion: DECISION_IR_SCHEMA_VERSION, proposalObjective: text(input.proposalObjective, "proposal objective")!, actions, claims, safeguards, executionConsequences, unknowns, evidenceReferences,
+    ...(normalizedGrounding ? { grounding: normalizedGrounding } : {}) };
 }
 
 export function serializeDecisionIR(input: DecisionIR): string {
