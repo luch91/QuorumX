@@ -597,7 +597,7 @@ export async function claimAssessmentJob(
 }
 
 export async function createReassessmentJob(
-  client: Client, canonicalId: string, assessmentSchemaVersion: "3.3", assessmentRunId: string,
+  client: Client, canonicalId: string, assessmentSchemaVersion: "3.3" | "3.4", assessmentRunId: string,
 ): Promise<string | undefined> {
   if (!/^[A-Za-z0-9:._-]{1,120}$/.test(assessmentRunId)) throw new Error("invalid_assessment_run_id");
   const result = await client.query<{ id: string }>(`

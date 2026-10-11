@@ -91,7 +91,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
             job.assessmentVersion === "3"
               ? readDueDiligenceV3(settings.genlayer, job.proposalKey, job.expectedContractContentHash,
                 job.contractAddress as `0x${string}` | undefined,
-                job.assessmentSchemaVersion === "3.3" ? job.assessmentRunId : undefined)
+                (job.assessmentSchemaVersion === "3.3" || job.assessmentSchemaVersion === "3.4") ? job.assessmentRunId : undefined)
               : job.assessmentVersion === "2"
                 ? readDueDiligence(settings.genlayer, job.proposalKey, job.expectedContractContentHash,
                   job.contractAddress as `0x${string}` | undefined)
@@ -108,7 +108,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
             result.transactionsRecovered += 1;
             continue;
           }
-          if (job.assessmentSchemaVersion === "3.3" && (!("assessmentRunId" in assessment)
+          if ((job.assessmentSchemaVersion === "3.3" || job.assessmentSchemaVersion === "3.4") && (!("assessmentRunId" in assessment)
               || assessment.assessmentSchemaVersion !== job.assessmentSchemaVersion
               || assessment.assessmentRunId !== job.assessmentRunId)) {
             await markSubmittedTerminal(client, job, "undetermined", "assessment run ID does not match submitted job");
@@ -225,7 +225,10 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
       }
       if (job.assessmentVersion === "3") {
         const assessmentRunId = job.assessmentRunId ?? `qx:v3:${job.revisionHash}`;
-        const contractAddress = settings.genlayer.dueDiligenceContracts?.["3.3"] ?? settings.genlayer.dueDiligenceV3ContractAddress!;
+        const contractAddress = job.assessmentSchemaVersion === "3.4"
+          ? settings.genlayer.dueDiligenceContracts?.["3.4"]
+          : settings.genlayer.dueDiligenceContracts?.["3.3"] ?? settings.genlayer.dueDiligenceV3ContractAddress;
+        if (!contractAddress) throw new Error(`V3 contract is not configured for schema ${job.assessmentSchemaVersion}`);
         const intent = await prepareSubmissionIntent(client, job, assessmentRunId);
         if (!intent.created && !intent.retryRearmed) {
           const recovered = await within(findSubmittedTransaction(settings.genlayer, assessmentRunId, contractAddress), callTimeout, "submission_reconcile");
@@ -238,7 +241,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
           }
           return;
         }
-        const transactionId = await within(submitDueDiligenceV3(settings.genlayer, job.source, assessmentRunId), callTimeout, "assessment_submit");
+        const transactionId = await within(submitDueDiligenceV3(settings.genlayer, job.source, assessmentRunId, contractAddress), callTimeout, "assessment_submit");
         await recordSubmittedTransaction(client, job, transactionId, "studionet", contractAddress);
         result.jobsProcessed += 1;
         return;

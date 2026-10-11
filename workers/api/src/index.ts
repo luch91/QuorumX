@@ -35,6 +35,10 @@ function pathValue(value: string): string {
 
 function cycleSettings(env: Env) {
   const configuredVersion: string = env.QUORUMX_ASSESSMENT_VERSION;
+  // `String` deliberately widens the generated local binding type: production
+  // activation supplies the immutable schema-3.4 address only after contract
+  // deployment, while the checked-in default remains schema 3.3.
+  const configuredSchema = String(env.QUORUMX_ASSESSMENT_SCHEMA_VERSION);
   if (!CONTRACT_ADDRESS.test(env.QUORUMX_CONTRACT_ADDRESS)) throw new Error("Contract address is invalid");
   if (configuredVersion !== "1" && configuredVersion !== "2" && configuredVersion !== "3") {
     throw new Error("Assessment version is invalid");
@@ -42,8 +46,14 @@ function cycleSettings(env: Env) {
   if (configuredVersion === "2" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)) {
     throw new Error("V2 contract address is invalid");
   }
-  if (configuredVersion === "3" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)) {
+  if (configuredVersion === "3" && configuredSchema !== "3.3" && configuredSchema !== "3.4") {
+    throw new Error("Format 3 assessment schema is invalid");
+  }
+  if (configuredVersion === "3" && configuredSchema === "3.3" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)) {
     throw new Error("V3 contract address is invalid");
+  }
+  if (configuredVersion === "3" && configuredSchema === "3.4" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_4_CONTRACT_ADDRESS)) {
+    throw new Error("V3.4 contract address is invalid");
   }
   if (!PRIVATE_KEY.test(env.QUORUMX_GENLAYER_PRIVATE_KEY)) throw new Error("GenLayer signing key is invalid");
   const snapshotLimit = Number(env.QUORUMX_SNAPSHOT_LIMIT);
@@ -62,7 +72,7 @@ function cycleSettings(env: Env) {
     snapshotLimit,
     enableWrites: env.QUORUMX_ENABLE_WRITES === "true",
     assessmentVersion: configuredVersion as "1" | "2" | "3",
-    assessmentSchemaVersion: configuredVersion === "3" ? "3.3" : configuredVersion,
+    assessmentSchemaVersion: configuredVersion === "3" ? configuredSchema : configuredVersion,
     genlayer: {
       contractAddress: env.QUORUMX_CONTRACT_ADDRESS as `0x${string}`,
       ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)
@@ -76,6 +86,8 @@ function cycleSettings(env: Env) {
           ? { "2": env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS as `0x${string}` } : {}),
         ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)
           ? { "3.3": env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS as `0x${string}` } : {}),
+        ...(CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_4_CONTRACT_ADDRESS)
+          ? { "3.4": env.QUORUMX_DUE_DILIGENCE_V3_4_CONTRACT_ADDRESS as `0x${string}` } : {}),
       },
       privateKey: env.QUORUMX_GENLAYER_PRIVATE_KEY as `0x${string}`,
       ...(env.QUORUMX_GENLAYER_RPC_URL ? { rpcUrl: env.QUORUMX_GENLAYER_RPC_URL } : {}),
@@ -146,7 +158,9 @@ async function readiness(env: Env, correlationId: string): Promise<Response> {
       attestation: { serviceVersion: SERVICE_VERSION, releaseCommit: env.QUORUMX_RELEASE_COMMIT,
         assessmentVersion: env.QUORUMX_ASSESSMENT_VERSION, writesEnabled: env.QUORUMX_ENABLE_WRITES === "true",
         schemaMigration: state.migration, contractAddress: env.QUORUMX_ASSESSMENT_VERSION === "3"
-          ? env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS
+          ? String(env.QUORUMX_ASSESSMENT_SCHEMA_VERSION) === "3.4"
+            ? env.QUORUMX_DUE_DILIGENCE_V3_4_CONTRACT_ADDRESS
+            : env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS
           : env.QUORUMX_ASSESSMENT_VERSION === "2" ? env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS : env.QUORUMX_CONTRACT_ADDRESS },
       correlationId,
     }, { status: status === "unready" ? 503 : 200 }, "no-store", correlationId);
@@ -194,8 +208,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (typeof body.canonicalId !== "string" || !body.canonicalId.trim()) return json({ error: "invalid_canonical_id" }, { status: 400 });
     const canonicalId = body.canonicalId;
     const runId = typeof body.assessmentRunId === "string" ? body.assessmentRunId : `manual:3:${crypto.randomUUID()}`;
+    const schema = cycleSettings(env).assessmentSchemaVersion;
+    if (schema !== "3.3" && schema !== "3.4") throw new Error("invalid reassessment schema");
     const jobId = await withDatabase(env.HYPERDRIVE.connectionString,
-      (client) => createReassessmentJob(client, canonicalId, "3.3", runId));
+      (client) => createReassessmentJob(client, canonicalId, schema, runId));
     return jobId ? json({ jobId, assessmentRunId: runId }, { status: 202 })
       : json({ error: "proposal_not_found_or_duplicate_run" }, { status: 409 });
   }
