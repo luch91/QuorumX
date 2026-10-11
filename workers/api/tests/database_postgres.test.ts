@@ -100,6 +100,44 @@ integration("PostgreSQL proposal coverage", () => {
     expect(await claimAssessmentJob(client, `capacity-zero-${space}`, "3", "3.3")).toBeUndefined();
   });
 
+  it("does not mass-requeue existing revisions when schema 3.4 is activated", async () => {
+    const source = { ...snapshotSourceForSpace("balancer.eth"), dailyAssessmentBudget: 20 };
+    const canonicalId = `snapshot:balancer.eth:schema34-existing-${Date.now()}`;
+    const externalId = canonicalId.split(":").at(-1)!;
+    const proposal: SnapshotProposal = {
+      externalId,
+      canonicalId,
+      source: { kind: "snapshot", space: "balancer.eth", proposalId: externalId },
+      authorAddress: "0x4444444444444444444444444444444444444444",
+      canonicalUrl: `https://snapshot.box/#/s:balancer.eth/proposal/${externalId}`,
+      title: "Schema activation isolation",
+      bodyText: "An already indexed active proposal.",
+      choices: ["For", "Against"],
+      linkedEvidenceUrls: [],
+      status: "active",
+      votingEndsAt: "2026-11-01T00:00:00.000Z",
+      assessmentEligible: true,
+    };
+    try {
+      const first = await ingestSnapshotProposals(client, source, [proposal], new Date("2026-10-11T00:00:00.000Z"), "3", "3.3");
+      expect(first.jobsCreated).toBe(1);
+
+      const schema34 = await ingestSnapshotProposals(client, source, [proposal], new Date("2026-10-11T00:01:00.000Z"), "3", "3.4");
+      expect(schema34.revisionsCreated).toBe(0);
+      expect(schema34.jobsCreated).toBe(0);
+      const jobs = await client.query<{ assessment_schema_version: string }>(`
+        select jobs.assessment_schema_version
+        from quorumx.assessment_jobs jobs
+        join quorumx.proposal_revisions revisions on revisions.id = jobs.revision_id
+        join quorumx.proposals proposals on proposals.id = revisions.proposal_id
+        where proposals.canonical_id = $1
+        order by jobs.created_at`, [canonicalId]);
+      expect(jobs.rows.map((row) => row.assessment_schema_version)).toEqual(["3.3"]);
+    } finally {
+      await client.query("delete from quorumx.proposals where canonical_id = $1", [canonicalId]);
+    }
+  });
+
   it("persists one exact retrospective revision and starts it idempotently", async () => {
     await client.query("delete from quorumx.proposals where canonical_id like 'snapshot:safe.eth:coverage-%'");
     const canonicalId = `snapshot:safe.eth:backfill-${Date.now()}`;
