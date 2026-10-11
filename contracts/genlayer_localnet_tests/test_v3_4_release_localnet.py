@@ -24,5 +24,5 @@ def test_v34_contract_deploys_and_exposes_its_schema(default_account):
     assert schema == {
         "assessmentVersion": "3",
         "assessmentSchemaVersion": "3.4",
-        "consensusMethod": "independent_structured_derivation_v3_4",
+        "consensusMethod": "candidate_validated_structured_ir_v3_4",
     }

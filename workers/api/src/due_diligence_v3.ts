@@ -441,7 +441,10 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
     strings(finding.humanDependencies, "human dependencies", 20); strings(finding.technicalDependencies, "technical dependencies", 4);
     str(finding.uncertainty, "uncertainty", 300);
     const consensus = object(finding.consensus, "finding consensus");
-    if (consensus.state !== "accepted" || consensus.method !== (schema33 ? "independent_structured_derivation_v3_3" : "independent_structured_derivation_v3")) throw new Error("Invalid v3 finding consensus");
+    const expectedConsensusMethod = record.assessmentSchemaVersion === "3.4"
+      ? "candidate_validated_structured_ir_v3_4"
+      : schema33 ? "independent_structured_derivation_v3_3" : "independent_structured_derivation_v3";
+    if (consensus.state !== "accepted" || consensus.method !== expectedConsensusMethod) throw new Error("Invalid v3 finding consensus");
     return finding;
   });
   if (new Set(findings.map((finding) => String(finding.id))).size !== findings.length) throw new Error("Duplicate v3 finding ID");
@@ -499,7 +502,10 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
   str(record.reviewPriorityExplanation, "priority explanation", 350); str(record.assessedAt, "assessedAt", 80);
   if (record.provenance !== "live" && record.provenance !== "fixture") throw new Error("Invalid v3 provenance");
   const consensus = object(record.consensus, "consensus");
-  if (consensus.state !== "accepted" || consensus.method !== (schema33 ? "independent_structured_derivation_v3_3" : "independent_structured_derivation_v3")) throw new Error("Invalid v3 consensus");
+  const expectedConsensusMethod = record.assessmentSchemaVersion === "3.4"
+    ? "candidate_validated_structured_ir_v3_4"
+    : schema33 ? "independent_structured_derivation_v3_3" : "independent_structured_derivation_v3";
+  if (consensus.state !== "accepted" || consensus.method !== expectedConsensusMethod) throw new Error("Invalid v3 consensus");
 
   return { ...record, ...(decisionIR ? { decisionIR } : {}), evidence, materialClaims: claims, findings, safeguardGaps, executionMap: execution,
     unresolvedQuestions: questions } as unknown as StoredDueDiligenceV3Assessment;

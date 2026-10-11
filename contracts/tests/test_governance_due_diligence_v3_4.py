@@ -63,3 +63,13 @@ def test_unsupported_action_values_are_downgraded_not_recorded_as_facts():
     action_record = record["actions"][0]
     assert "recipient" not in action_record
     assert record["grounding"]["actions"][0]["state"] == "partially_grounded"
+
+
+def test_candidate_validation_protocol_requires_an_explicit_semantic_acceptance():
+    module = load_module()
+    prompt = module.decision_candidate_validation_prompt("Claim USDC.", candidate("Claim USDC.", []))
+    assert "Do not create a replacement Decision IR" in prompt
+    assert "materially complete and faithful" in prompt
+    assert module.candidate_semantically_acceptable({"acceptable": True}) is True
+    assert module.candidate_semantically_acceptable({"acceptable": False}) is False
+    assert module.candidate_semantically_acceptable({"acceptable": True, "reason": "extra"}) is False

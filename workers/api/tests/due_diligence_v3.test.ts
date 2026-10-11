@@ -118,6 +118,9 @@ async function schema33Record() {
 async function schema34Record() {
   const value: any = await schema33Record();
   value.assessmentSchemaVersion = "3.4";
+  value.consensus = { state: "accepted", method: "candidate_validated_structured_ir_v3_4" };
+  value.findings = value.findings.map((finding: any) => ({ ...finding,
+    consensus: { state: "accepted", method: "candidate_validated_structured_ir_v3_4" } }));
   value.decisionIR = {
     schemaVersion: "3.4", proposalObjective: "Recover unclaimed USDC rewards.",
     actions: [{ id: "claim-fees", operation: "token_claim", sourceExcerpt: "Recover unclaimed USDC rewards.",

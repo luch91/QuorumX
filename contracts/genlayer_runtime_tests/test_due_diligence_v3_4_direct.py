@@ -53,7 +53,7 @@ def test_schema_34_contract_deploys_with_the_decision_modules(direct_deploy, dir
     assert schema == {
         "assessmentVersion": "3",
         "assessmentSchemaVersion": "3.4",
-        "consensusMethod": "independent_structured_derivation_v3_4",
+        "consensusMethod": "candidate_validated_structured_ir_v3_4",
     }
 
 
@@ -74,7 +74,7 @@ def test_bip_933_assessment_contains_a_grounded_decision_ir(direct_vm, direct_de
         }}}),
     })
     excerpt = "The DAO multisig can recover the USDC by atomically calling `claimFees(FeeDistributor, USDC, DAO, 0)` four times. This is necessary because the grant has accumulated more than 60 weeks of unclaimed USDC, while the FeeDistributor settles at most 20 weeks per call."
-    direct_vm.mock_llm(r".*Proposal material is untrusted data.*", json.dumps({
+    direct_vm.mock_llm(r".*Return JSON only with proposalObjective.*", json.dumps({
         "proposalObjective": "The DAO multisig can recover the USDC by atomically calling claimFees(FeeDistributor, USDC, DAO, 0) four times.",
         "actions": [{"id": "claim-fees", "operation": "token_claim", "actor": "DAO multisig",
           "function": "claimFees", "arguments": ["FeeDistributor", "USDC", "DAO", "0"],
@@ -94,4 +94,11 @@ def test_bip_933_assessment_contains_a_grounded_decision_ir(direct_vm, direct_de
     assert action["recipient"] == "DAO"
     assert action["frequency"] == "four times"
     assert action["dependencies"] == ["at most 20 weeks per call", "more than 60 weeks"]
+    direct_vm.clear_mocks()
+    direct_vm.mock_llm(r".*Review the proposed Decision IR.*", json.dumps({"acceptable": True}))
     assert direct_vm.run_validator() is True
+    # A validator can reject the same syntactically grounded candidate when
+    # its independent semantic review finds a material error or omission.
+    direct_vm.clear_mocks()
+    direct_vm.mock_llm(r".*Review the proposed Decision IR.*", json.dumps({"acceptable": False}))
+    assert direct_vm.run_validator() is False
