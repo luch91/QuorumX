@@ -1,5 +1,25 @@
 import type { DecisionIR } from "./decision_ir";
 
+export interface DecisionEvidencePlan {
+  schemaVersion: "3.4";
+  assessmentContext: "live" | "retrospective";
+  source: { kind: "snapshot"; space: string; proposalId: string };
+  items: Array<{
+    id: string;
+    actionIds: string[];
+    claimIds: string[];
+    adapter: "ethereum_rpc_contract_state" | "safe_state" | "blockscout_transaction" | "snapshot_governance_history" | "github_execution_pr";
+    source: "ethereum_rpc" | "blockscout" | "snapshot" | "github";
+    locator: string;
+    authority: V3EvidenceAuthority;
+    verificationScope: V3VerificationScope;
+    temporalScope: V3TemporalScope;
+    historicalLookupRequired?: boolean;
+    fallbackTemporalScope?: V3TemporalScope;
+    isExecutionProof?: false;
+  }>;
+}
+
 export type ProposalStatus = "pending" | "active" | "closed" | "unknown";
 
 export interface SnapshotProposal {
@@ -135,6 +155,7 @@ export interface StoredDueDiligenceV3Assessment {
   assessmentVersion: "3";
   assessmentSchemaVersion?: "3.1" | "3.2" | "3.3" | "3.4";
   decisionIR?: DecisionIR;
+  evidencePlan?: DecisionEvidencePlan;
   assessmentRunId?: string;
   assessmentContext?: "live" | "retrospective";
   proposalCloseTime?: string;

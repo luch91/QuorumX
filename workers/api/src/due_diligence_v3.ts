@@ -1,4 +1,5 @@
 import { contractCanonicalJson, sha256 } from "./canonical";
+import { createDecisionIR, type DecisionIR } from "./decision_ir";
 import type { StoredDueDiligenceV3Assessment } from "./domain";
 import { getAddress } from "viem";
 
@@ -14,6 +15,12 @@ const STATES = new Set(["supported", "partially_supported", "unverified", "contr
 const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
 const SAFE_FAILURE_CODE = /^(?:rpc_(?:publicnode|drpc)_(?:request_error|invalid_http_status|http_[1-5][0-9]{2}|invalid_body|response_too_large|invalid_json|invalid_envelope|remote_error|batch_http_error|invalid_batch)|rpc_(?:not_mainnet|no_finalized_block|invalid_block_pin|invalid_block_hash|block_disagreement|safe_call_disagreement|safe_threshold_invalid|safe_owners_invalid|safe_threshold_exceeds_owners|invalid_safe_address|invalid_batch|adapter_error|invalid_historical_time|historical_boundary_disagreement|historical_state_unavailable|historical_time_not_finalized|historical_lookup_limit))$/;
 const TEMPORAL_SCOPES = new Set(["historically_anchored", "current_state_observed", "inherently_historical", "unknown"]);
+const PLAN_ADAPTERS = new Set(["ethereum_rpc_contract_state", "safe_state", "blockscout_transaction", "snapshot_governance_history", "github_execution_pr"]);
+const PLAN_SOURCES = new Set(["ethereum_rpc", "blockscout", "snapshot", "github"]);
+const PLAN_ADAPTER_SOURCE: Record<string, string> = {
+  ethereum_rpc_contract_state: "ethereum_rpc", safe_state: "ethereum_rpc", blockscout_transaction: "blockscout",
+  snapshot_governance_history: "snapshot", github_execution_pr: "github",
+};
 function iso(value: unknown, field: string, optional = false): string {
   const result = str(value, field, 80, optional);
   if (result && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(result) || Number.isNaN(Date.parse(result)))) throw new Error(`Invalid v3 ${field}`);
@@ -44,6 +51,36 @@ function ethToMicro(value: string): bigint {
   return BigInt(match[1]) * 1_000_000n + BigInt((match[2] ?? "").padEnd(6, "0"));
 }
 
+function parseDecisionPlan(raw: unknown, proposalKey: string, decisionActionIds: Set<string>, decisionClaimIds: Set<string>): void {
+  const plan = object(raw, "evidence plan");
+  if (plan.schemaVersion !== "3.4" || !["live", "retrospective"].includes(String(plan.assessmentContext))) {
+    throw new Error("Invalid v3 evidence plan");
+  }
+  const source = object(plan.source, "evidence plan source");
+  if (source.kind !== "snapshot" || typeof source.space !== "string" || typeof source.proposalId !== "string"
+      || `snapshot:${source.space}:${source.proposalId}` !== proposalKey) throw new Error("Invalid v3 evidence plan source");
+  const ids = new Set<string>();
+  for (const item of list(plan.items, "evidence plan items", 12)) {
+    const candidate = object(item, "evidence plan item");
+    const id = str(candidate.id, "evidence plan ID", 120);
+    if (ids.has(id)) throw new Error("Duplicate v3 evidence plan ID");
+    ids.add(id);
+    if (!PLAN_ADAPTERS.has(String(candidate.adapter)) || !PLAN_SOURCES.has(String(candidate.source))
+        || PLAN_ADAPTER_SOURCE[String(candidate.adapter)] !== candidate.source
+        || !["primary", "secondary", "contextual"].includes(String(candidate.authority))
+        || !["validator_retrieved_proposal", "validator_retrieved_external_source"].includes(String(candidate.verificationScope))
+        || !TEMPORAL_SCOPES.has(String(candidate.temporalScope))) throw new Error("Invalid v3 evidence plan item");
+    str(candidate.locator, "evidence plan locator", 300);
+    const actionIds = strings(candidate.actionIds, "evidence plan action IDs", 8);
+    const claimIds = strings(candidate.claimIds, "evidence plan claim IDs", 8);
+    if (!actionIds.length && !claimIds.length || actionIds.some((id) => !decisionActionIds.has(id))
+        || claimIds.some((id) => !decisionClaimIds.has(id))) throw new Error("Invalid v3 evidence plan relationship");
+    if (candidate.historicalLookupRequired !== undefined && typeof candidate.historicalLookupRequired !== "boolean") throw new Error("Invalid v3 evidence plan historical lookup");
+    if (candidate.fallbackTemporalScope !== undefined && !TEMPORAL_SCOPES.has(String(candidate.fallbackTemporalScope))) throw new Error("Invalid v3 evidence plan fallback scope");
+    if (candidate.isExecutionProof !== undefined && candidate.isExecutionProof !== false) throw new Error("Invalid v3 execution evidence plan");
+  }
+}
+
 export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Promise<StoredDueDiligenceV3Assessment | undefined> {
   if (raw === "" || raw === null || raw === undefined) return undefined;
   const record = object(typeof raw === "string" ? JSON.parse(raw) as unknown : raw, "record");
@@ -51,10 +88,23 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
   if (recordBytes > 25_000 || record.assessmentVersion !== "3" || record.proposalKey !== proposalKey) {
     throw new Error("Invalid v3 assessment identity or size");
   }
-  if (record.assessmentSchemaVersion !== undefined && !["3.1", "3.2", "3.3"].includes(String(record.assessmentSchemaVersion))) throw new Error("Unsupported v3 schema version");
-  const schema33 = record.assessmentSchemaVersion === "3.3";
-  if (schema33 && recordBytes > 22_000) throw new Error("Invalid v3.3 assessment size");
+  if (record.assessmentSchemaVersion !== undefined && !["3.1", "3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion))) throw new Error("Unsupported v3 schema version");
+  const schema34 = record.assessmentSchemaVersion === "3.4";
+  const schema33 = record.assessmentSchemaVersion === "3.3" || schema34;
+  if (record.assessmentSchemaVersion === "3.3" && recordBytes > 22_000) throw new Error("Invalid v3.3 assessment size");
   if (schema33) str(record.assessmentRunId, "assessment run ID", 120);
+  let decisionIR: DecisionIR | undefined;
+  if (schema34) {
+    let decision: DecisionIR;
+    try { decision = createDecisionIR(object(record.decisionIR, "Decision IR") as unknown as DecisionIR); }
+    catch { throw new Error("Invalid v3 Decision IR"); }
+    if (decision.grounding?.proposalObjective !== "grounded" || decision.grounding.actions.length !== decision.actions.length
+        || decision.actions.some((action) => !decision.grounding?.actions.some((grounding) => grounding.id === action.id && grounding.retained && grounding.state !== "unresolved"))) {
+      throw new Error("Invalid v3 Decision IR grounding");
+    }
+    parseDecisionPlan(record.evidencePlan, proposalKey, new Set(decision.actions.map((action) => action.id)), new Set(decision.claims.map((claim) => claim.id)));
+    decisionIR = decision;
+  }
   const hasTemporalContext = record.assessmentContext !== undefined || record.proposalCloseTime !== undefined || record.evidenceRetrievedAt !== undefined;
   if (hasTemporalContext) {
     if (!schema33 || !["live", "retrospective"].includes(String(record.assessmentContext))) throw new Error("Invalid v3 assessment context");
@@ -101,7 +151,7 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
     } else if (item.type === "safe_onchain") {
       const structured = object(item.structuredData, "on-chain Safe state");
       const provider = String(structured.provider);
-      if (!["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)) || !Object.hasOwn(SAFE_RPC_PROVIDERS, provider)
+      if (!["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)) || !Object.hasOwn(SAFE_RPC_PROVIDERS, provider)
           || item.verificationScope !== "validator_retrieved_external_source" || item.authority !== "secondary"
           || item.locator !== SAFE_RPC_PROVIDERS[provider as keyof typeof SAFE_RPC_PROVIDERS]
           || item.id !== `safe-rpc-${provider}` || structured.chainId !== 1
@@ -181,11 +231,11 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
   const safeRpcEvidence = [evidenceById.get("safe-rpc-publicnode"), evidenceById.get("safe-rpc-drpc")];
   const anySafeRpcEvidence = safeRpcEvidence.some(Boolean);
   const hasSafeRpc = safeRpcEvidence.every(Boolean);
-  if ((["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)) && anySafeRpcEvidence !== hasSafeRpc)
-      || (!["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)) && anySafeRpcEvidence)) {
+  if ((["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)) && anySafeRpcEvidence !== hasSafeRpc)
+      || (!["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)) && anySafeRpcEvidence)) {
     throw new Error("Incomplete or version-incompatible dual-RPC Safe evidence");
   }
-  if (["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)) && hasSafeRpc) {
+  if (["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)) && hasSafeRpc) {
     const first = object(safeRpcEvidence[0]!.structuredData, "first on-chain Safe provider data");
     const second = object(safeRpcEvidence[1]!.structuredData, "second on-chain Safe provider data");
     for (const field of ["address", "chainId", "blockNumber", "blockHash", "threshold"]) {
@@ -194,7 +244,7 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
     if (contractCanonicalJson(first.owners) !== contractCanonicalJson(second.owners)) throw new Error("V3 RPC providers disagree on Safe owners");
     if (first.provider !== "publicnode" || second.provider !== "drpc") throw new Error("V3 Safe provider evidence is not in canonical provider order");
   }
-  const safeEvidenceStateConsistent = ["3.2", "3.3"].includes(String(record.assessmentSchemaVersion))
+  const safeEvidenceStateConsistent = ["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion))
     ? (record.externalEvidenceState === "retrieved") === hasSafeRpc
     : (record.externalEvidenceState === "retrieved") === evidenceById.has("safe-mainnet");
   if (!["not_attempted", "retrieved", "unavailable"].includes(String(record.externalEvidenceState)) || !safeEvidenceStateConsistent) {
@@ -205,12 +255,12 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
     const retrospectiveFallback = record.assessmentContext === "retrospective" && record.externalEvidenceState === "retrieved"
       && safeRpcEvidence.every((item) => item && object(item.temporal, "Safe temporal metadata").temporalScope === "current_state_observed");
     if ((code && ((!retrospectiveFallback && record.externalEvidenceState !== "unavailable") || !SAFE_FAILURE_CODE.test(code)))
-        || (!code && record.externalEvidenceState === "unavailable" && ["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)))) {
+        || (!code && record.externalEvidenceState === "unavailable" && ["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)))) {
       throw new Error("Invalid v3 external evidence failure code");
     }
   }
   const onchainEvidence = evidence.filter((item) => item.type === "onchain");
-  if (["3.1", "3.2", "3.3"].includes(String(record.assessmentSchemaVersion))) {
+  if (["3.1", "3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion))) {
     if (!["not_attempted", "retrieved", "unavailable"].includes(String(record.returnedFundsState))
         || (record.returnedFundsState === "retrieved") !== (schema33 ? onchainEvidence.length >= 1 && onchainEvidence.length <= 5 : onchainEvidence.length === 5)
         || (record.returnedFundsState !== "retrieved" && onchainEvidence.length !== 0)) {
@@ -285,7 +335,7 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
           }
         }
       } else if (item.verificationMethod === "ethereum_mainnet_dual_rpc_safe_config_comparison_v1") {
-        if (!["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)) || record.externalEvidenceState !== "retrieved"
+        if (!["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)) || record.externalEvidenceState !== "retrieved"
             || !claimEvidence.includes("safe-rpc-publicnode") || !claimEvidence.includes("safe-rpc-drpc")) {
           throw new Error("V3 verified Safe claim lacks matching dual-RPC evidence");
         }
@@ -305,12 +355,12 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
           throw new Error("V3 Safe counter-evidence does not match dual-RPC data");
         }
       } else if (item.verificationMethod === "blockscout_mainnet_transfer_amount_comparison") {
-        if (!["3.1", "3.2", "3.3"].includes(String(record.assessmentSchemaVersion)) || record.returnedFundsState !== "retrieved"
+        if (!["3.1", "3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)) || record.returnedFundsState !== "retrieved"
             || item.status !== "supported" || claimEvidence[0] !== "proposal"
             || claimEvidence.length < 2 || claimEvidence.length > 6) {
           throw new Error("V3.1 returned-funds claim lacks complete evidence");
         }
-        const safeEvidenceId = ["3.2", "3.3"].includes(String(record.assessmentSchemaVersion)) ? "safe-rpc-publicnode" : "safe-mainnet";
+        const safeEvidenceId = ["3.2", "3.3", "3.4"].includes(String(record.assessmentSchemaVersion)) ? "safe-rpc-publicnode" : "safe-mainnet";
         const safeData = object(evidenceById.get(safeEvidenceId)?.structuredData, "returned-funds Safe");
         const listedAmount = String(item.claim).match(/reports ([\d,]+(?:\.\d+)?) ETH returned/i)?.[1]?.replace(/,/g, "");
         const sourceTotal = claimExcerpt.match(/\*\*([\d,]+(?:\.\d+)?)\*\*/)?.[1]?.replace(/,/g, "");
@@ -451,6 +501,6 @@ export async function parseDueDiligenceV3(raw: unknown, proposalKey: string): Pr
   const consensus = object(record.consensus, "consensus");
   if (consensus.state !== "accepted" || consensus.method !== (schema33 ? "independent_structured_derivation_v3_3" : "independent_structured_derivation_v3")) throw new Error("Invalid v3 consensus");
 
-  return { ...record, evidence, materialClaims: claims, findings, safeguardGaps, executionMap: execution,
+  return { ...record, ...(decisionIR ? { decisionIR } : {}), evidence, materialClaims: claims, findings, safeguardGaps, executionMap: execution,
     unresolvedQuestions: questions } as unknown as StoredDueDiligenceV3Assessment;
 }

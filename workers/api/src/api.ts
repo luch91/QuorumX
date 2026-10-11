@@ -349,7 +349,7 @@ export async function getDueDiligence(client: Client, proposalKey: string): Prom
 }
 
 export async function getDueDiligenceV3(client: Client, proposalKey: string, schema?: string): Promise<unknown | undefined> {
-  if (schema !== undefined && !/^3\.(?:0|1|2|3)$/.test(schema)) throw new RangeError("invalid_assessment_schema");
+  if (schema !== undefined && !/^3\.(?:0|1|2|3|4)$/.test(schema)) throw new RangeError("invalid_assessment_schema");
   const result = await client.query(`
     select
       due_diligence.record,

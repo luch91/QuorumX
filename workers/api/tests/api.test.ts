@@ -88,6 +88,9 @@ describe("versioned due diligence reads", () => {
     await getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "3.2");
     expect(client.query).toHaveBeenCalledWith(expect.stringContaining("assessment_schema_version desc"),
       ["snapshot:safe.eth:p1", "3.2"]);
+    await getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "3.4");
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining("assessment_schema_version desc"),
+      ["snapshot:safe.eth:p1", "3.4"]);
     await expect(getDueDiligenceV3(client as never, "snapshot:safe.eth:p1", "latest"))
       .rejects.toThrow("invalid_assessment_schema");
   });
