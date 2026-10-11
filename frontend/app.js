@@ -473,16 +473,6 @@
     tabs.forEach((tab) => tab.addEventListener("click", () => markActive(tab.getAttribute("href")?.slice(1) || "record-overview")));
     window.addEventListener("hashchange", fromHash);
     fromHash();
-    if (!("IntersectionObserver" in window)) return;
-    const observer = new IntersectionObserver((entries) => {
-      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-      if (visible) markActive(visible.target.id);
-    }, { rootMargin: "-30% 0px -60%", threshold: 0 });
-    tabs.forEach((tab) => {
-      const section = document.querySelector(tab.getAttribute("href"));
-      if (section) observer.observe(section);
-    });
-    window.addEventListener("pagehide", () => observer.disconnect(), { once: true });
   }
 
   function setupDelegatedActions() {
