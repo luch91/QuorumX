@@ -45,7 +45,7 @@ def windows_genlayer_test_stdin_cleanup(monkeypatch, request):
 
 def candidate():
     return {
-        "proposalObjective": "Recover the USDC.",
+        "proposalObjective": "The DAO multisig can recover the USDC by atomically calling claimFees(FeeDistributor, USDC, DAO, 0) four times.",
         "actions": [{
             "id": "claim-fees", "operation": "token_claim", "actor": "DAO multisig",
             "function": "claimFees", "arguments": ["FeeDistributor", "USDC", "DAO", "0"],
@@ -70,24 +70,40 @@ def test_v34_normalization_boundary_is_deterministic_in_genvm(direct_vm, direct_
     assert result["actions"][0]["function"] == "claimFees"
 
 
-def test_v34_semantic_validation_protocol_accepts_only_an_explicit_acceptance():
+def test_v34_validator_boundary_uses_no_semantic_review_prompt():
     source = (Path(__file__).parents[1] / "decision_ir_v3_4.py").read_text(encoding="utf-8")
-    assert "Do not create a replacement Decision IR" in source
-    assert "Do not require identical wording" in source
-    assert 'set(raw.keys()) == {"acceptable"}' in source
+    assessment_source = (Path(__file__).parents[1] / "governance_due_diligence_v3_4.py").read_text(encoding="utf-8")
+    assert "Review the proposed Decision IR" not in source
+    assert "Review the proposed Decision IR" not in assessment_source
+    assert "deterministic_candidate_valid(leader.calldata, material)" in source
+    assert "deterministic_candidate_valid(leader.calldata, material)" in assessment_source
+    assert "verify_candidate" in source
 
 
-def test_v34_semantic_validation_rejects_an_incorrect_or_incomplete_candidate(direct_vm, direct_deploy):
+def test_v34_deterministic_validator_accepts_the_same_grounded_candidate(direct_vm, direct_deploy):
     contract = direct_deploy(
         "contracts/decision_ir_v3_4.py",
         sdk_version=GENVM_SDK_VERSION,
     )
     direct_vm.mock_llm(r".*Extract only the JSON Decision IR schema below.*", json.dumps(candidate()))
     contract.extract(MATERIAL)
+    # The validator has no semantic-model call to mock. It independently runs
+    # the deterministic grounding and relationship checks.
+    assert direct_vm.run_validator() is True
 
-    direct_vm.clear_mocks()
-    direct_vm.mock_llm(r".*Review the proposed Decision IR.*", json.dumps({"acceptable": False}))
 
+def test_v34_verify_candidate_runs_the_deterministic_consensus_boundary(direct_vm, direct_deploy):
+    contract = direct_deploy("contracts/decision_ir_v3_4.py", sdk_version=GENVM_SDK_VERSION)
+    result = json.loads(contract.verify_candidate(MATERIAL, json.dumps(candidate())))
+    assert result["actions"][0]["function"] == "claimFees"
+    assert direct_vm.run_validator() is True
+
+
+def test_v34_validator_safely_rejects_a_candidate_with_reordered_call_arguments(direct_vm, direct_deploy):
+    contract = direct_deploy("contracts/decision_ir_v3_4.py", sdk_version=GENVM_SDK_VERSION)
+    malicious = candidate()
+    malicious["actions"][0]["arguments"] = ["FeeDistributor", "DAO", "USDC", "0"]
+    contract.verify_candidate(MATERIAL, json.dumps(malicious))
     assert direct_vm.run_validator() is False
 
 

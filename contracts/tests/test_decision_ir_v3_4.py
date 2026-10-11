@@ -56,7 +56,9 @@ def test_bip_933_generic_contract_call_is_representable_without_extra_inference(
     result = normalize_decision_ir(response, FIXTURE["body"])
     action = result["actions"][0]
     assert action["function"] == "claimFees"
-    assert action["arguments"] == ["0", "DAO", "FeeDistributor", "USDC"]
+    # Argument order is semantic for a contract call and is therefore part of
+    # the deterministic candidate/validator boundary.
+    assert action["arguments"] == ["FeeDistributor", "USDC", "DAO", "0"]
 
 
 def test_safe_fixture_represents_two_grounded_funding_actions_deterministically():
