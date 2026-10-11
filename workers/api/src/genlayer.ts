@@ -13,7 +13,7 @@ export interface GenLayerSettings {
   contractAddress: `0x${string}`;
   dueDiligenceContractAddress?: `0x${string}`;
   dueDiligenceV3ContractAddress?: `0x${string}`;
-  dueDiligenceContracts?: Partial<Record<"2" | "3.1" | "3.2" | "3.3", `0x${string}`>>;
+  dueDiligenceContracts?: Partial<Record<"2" | "3.1" | "3.2" | "3.3" | "3.4", `0x${string}`>>;
   privateKey?: `0x${string}`;
   rpcUrl?: string;
 }
@@ -37,8 +37,9 @@ export async function submitDueDiligenceV3(
   settings: GenLayerSettings,
   source: { kind: "snapshot"; space: string; proposalId: string },
   idempotencyKey: string,
+  contractAddress?: `0x${string}`,
 ): Promise<string> {
-  const address = settings.dueDiligenceContracts?.["3.3"] ?? settings.dueDiligenceV3ContractAddress;
+  const address = contractAddress ?? settings.dueDiligenceContracts?.["3.3"] ?? settings.dueDiligenceV3ContractAddress;
   if (!settings.privateKey || !address) {
     throw new Error("V3 contract or signing key is not configured");
   }

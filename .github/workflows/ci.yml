@@ -46,11 +46,12 @@ jobs:
           genvm-lint lint contracts/governance_risk.py --json
           genvm-lint lint contracts/governance_due_diligence.py --json
           genvm-lint lint contracts/governance_due_diligence_v3_3.py --json
+          genvm-lint lint contracts/governance_due_diligence_v3_4.py --json
       - name: GenVM semantic validation (known upstream artifact issue)
         shell: bash
         run: |
           set +e
-          for contract in contracts/governance_risk.py contracts/governance_due_diligence.py contracts/governance_due_diligence_v3_3.py; do
+          for contract in contracts/governance_risk.py contracts/governance_due_diligence.py contracts/governance_due_diligence_v3_3.py contracts/governance_due_diligence_v3_4.py; do
             output="$(genvm-lint check "$contract" --json 2>&1)"
             status=$?
             printf '%s\n' "$output"

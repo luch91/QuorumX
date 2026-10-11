@@ -246,9 +246,27 @@ describe("indexer cycle", () => {
       genlayer: { ...settings.genlayer, dueDiligenceV3ContractAddress: v3Address } });
 
     expect(findSubmittedTransaction).not.toHaveBeenCalled();
-    expect(submitDueDiligenceV3).toHaveBeenCalledWith(expect.anything(), job.source, "backfill:3.3:1:1644");
+    expect(submitDueDiligenceV3).toHaveBeenCalledWith(expect.anything(), job.source, "backfill:3.3:1:1644", v3Address);
     expect(recordSubmittedTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), freshHash,
       "studionet", v3Address);
+  });
+
+  it("routes a new schema 3.4 job to the separately configured immutable contract", async () => {
+    const v34Address = "0x4444444444444444444444444444444444444444" as const;
+    const transaction = `0x${"c".repeat(64)}`;
+    jest.mocked(claimAssessmentJob).mockResolvedValue({
+      ...job,
+      assessmentVersion: "3",
+      assessmentSchemaVersion: "3.4",
+      assessmentRunId: "qx:v3:3.4:revision",
+    });
+    jest.mocked(submitDueDiligenceV3).mockResolvedValueOnce(transaction);
+
+    await runIndexerCycle({ ...settings, assessmentVersion: "3", assessmentSchemaVersion: "3.4",
+      genlayer: { ...settings.genlayer, dueDiligenceContracts: { "3.4": v34Address } } });
+
+    expect(submitDueDiligenceV3).toHaveBeenCalledWith(expect.anything(), job.source, "qx:v3:3.4:revision", v34Address);
+    expect(recordSubmittedTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), transaction, "studionet", v34Address);
   });
 
   it("claims only jobs for the enabled assessment version", async () => {
