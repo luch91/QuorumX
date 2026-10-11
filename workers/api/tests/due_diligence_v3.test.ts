@@ -221,6 +221,15 @@ describe("v3 due-diligence parser", () => {
     expect(parsed?.decisionIR?.grounding?.actions[0].retained).toBe(true);
   });
 
+  it("accepts the deterministic schema 3.4 consensus marker while retaining the legacy marker for reads", async () => {
+    const record = await schema34Record();
+    record.consensus = { state: "accepted", method: "deterministic_grounded_candidate_v3_4" };
+    record.findings = record.findings.map((finding: any) => ({ ...finding,
+      consensus: { state: "accepted", method: "deterministic_grounded_candidate_v3_4" } }));
+    const parsed = await parseDueDiligenceV3(record, proposalKey);
+    expect(parsed?.consensus.method).toBe("deterministic_grounded_candidate_v3_4");
+  });
+
   it("rejects a schema 3.4 record without a grounded Decision IR", async () => {
     const missing = await schema34Record();
     delete missing.decisionIR;

@@ -14,7 +14,7 @@ MATERIAL = (
     "`claimFees(FeeDistributor, USDC, DAO, 0)` four times."
 )
 CANDIDATE = {
-    "proposalObjective": "Recover the USDC.",
+    "proposalObjective": "The DAO multisig can recover the USDC by atomically calling claimFees(FeeDistributor, USDC, DAO, 0) four times.",
     "actions": [{
         "id": "claim-fees", "operation": "token_claim", "actor": "DAO multisig",
         "function": "claimFees", "arguments": ["FeeDistributor", "USDC", "DAO", "0"],
@@ -26,7 +26,7 @@ CANDIDATE = {
 }
 
 
-def test_v34_deploys_and_normalizes_a_grounded_candidate_on_five_validators(default_account):
+def test_v34_five_validators_execute_the_deterministic_candidate_boundary(default_account):
     contract_path = Path(__file__).parents[1] / "decision_ir_v3_4.py"
     factory = ContractFactory.from_file_path(str(contract_path))
     deploy_receipt = factory.deploy_contract_tx(
@@ -41,7 +41,7 @@ def test_v34_deploys_and_normalizes_a_grounded_candidate_on_five_validators(defa
         address=address, function_name="get_schema", account=default_account, args=[],
     ) == "3.4"
     tx_hash = client.write_contract(
-        address=address, function_name="normalize_candidate", account=default_account,
+        address=address, function_name="verify_candidate", account=default_account,
         args=[MATERIAL, json.dumps(CANDIDATE)],
     )
     receipt = client.wait_for_transaction_receipt(
