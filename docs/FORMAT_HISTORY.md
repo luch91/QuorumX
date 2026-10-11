@@ -21,12 +21,15 @@ Its evidence boundary is the independently retrieved proposal.
 - Schema 3.3 added immutable run IDs, bounded Snapshot governance-history
   evidence, expanded safeguard and execution relationships, and the current
   independently derived structured report.
+- Schema 3.4 adds a grounded Decision IR and deterministic evidence plan while
+  retaining bounded Safe configuration checks. It is an internal compatibility
+  schema within public Format 3, not a new public product version.
 
 These labels remain in contract state, database rows, and parsers solely so
 historical immutable records can be decoded exactly. New compatible product
 work remains format 3 and does not create a new public decimal version.
 
-The current format 3 Studionet contract is
+The active production-routed Format 3 contract is
 `0x319e020B2cf81a5c1D7E6d8F831B8F0c531ea860` (deployment transaction
 `0x8db0a0e5be933c1fb025e1a8431b1d60eb912a86b543ed13cf12700320da12ae`). It
 replaced the prior format 3.3 address,
@@ -37,3 +40,12 @@ format or schema label: both deployments use format 3, schema 3.3. The prior
 address, its evaluation contracts, and its accepted records remain historical
 and immutable. Fixed provider evidence is secondary; it is not represented as a
 cryptographic state or inclusion proof.
+
+Schema 3.4 is deployed separately on Studionet at
+`0x312310d6D2aFA84bC55A7D6fAc68a623cBDD11c4` (deployment transaction
+`0x5e28c52d72839867ae880af5bef40121faad5b1d20f88b45d404e3c8306a58d6`).
+The ordinary Worker route remains on schema 3.3. The isolated BIP-933 canary
+job was created and its runner invoked once, but the job remains pending because
+both rolling live-assessment slots for Balancer were occupied. No canary
+transaction or accepted schema 3.4 assessment exists. Deployment and localnet
+schema smoke tests do not establish live canary acceptance or global rollout readiness.
