@@ -200,7 +200,14 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
     }
     const activeVersion = settings.assessmentVersion ?? "1";
     const activeSchema = settings.assessmentSchemaVersion ?? activeVersion;
-    const job = await claimAssessmentJob(client, settings.workerId ?? crypto.randomUUID(), activeVersion, activeSchema);
+    // Schema 3.4 is prospective, but a deployment must continue the
+    // previously accepted 3.3 jobs already in the durable queue.  Claim both
+    // schemas in one ordered database selection so the existing live-over-
+    // backfill priority is preserved across the schema boundary.
+    const claimSchemas = activeVersion === "3" && activeSchema === "3.4"
+      ? ["3.3", "3.4"]
+      : activeSchema;
+    const job = await claimAssessmentJob(client, settings.workerId ?? crypto.randomUUID(), activeVersion, claimSchemas);
     if (!job) return;
     try {
       if (job.assessmentVersion === "2") {

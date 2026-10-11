@@ -39,7 +39,7 @@ describe("due diligence v2 boundary", () => {
     const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     await claimAssessmentJob(client as never, "worker-a", "1");
     expect(client.query).toHaveBeenCalledWith(expect.stringContaining("candidate.assessment_version = $2"),
-      ["worker-a", "1", "1"]);
+      ["worker-a", "1", ["1"]]);
     const sql = jest.mocked(client.query).mock.calls
       .map(([query]) => String(query)).find((query) => query.includes("eligible_candidate"))!;
     expect(sql).toContain("lease_expires_at");
