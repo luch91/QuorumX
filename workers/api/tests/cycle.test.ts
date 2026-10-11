@@ -269,6 +269,26 @@ describe("indexer cycle", () => {
     expect(recordSubmittedTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), transaction, "studionet", v34Address);
   });
 
+  it("continues queued schema 3.3 work under a schema 3.4 rollout without bypassing queue priority", async () => {
+    const v33Address = "0x3333333333333333333333333333333333333333" as const;
+    const v34Address = "0x4444444444444444444444444444444444444444" as const;
+    const transaction = `0x${"d".repeat(64)}`;
+    jest.mocked(claimAssessmentJob).mockResolvedValue({
+      ...job,
+      assessmentVersion: "3",
+      assessmentSchemaVersion: "3.3",
+      assessmentRunId: "backfill:3.3:1:preserved",
+      jobKind: "backfill",
+    });
+    jest.mocked(submitDueDiligenceV3).mockResolvedValueOnce(transaction);
+
+    await runIndexerCycle({ ...settings, assessmentVersion: "3", assessmentSchemaVersion: "3.4",
+      genlayer: { ...settings.genlayer, dueDiligenceContracts: { "3.3": v33Address, "3.4": v34Address } } });
+
+    expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "3", ["3.3", "3.4"]);
+    expect(submitDueDiligenceV3).toHaveBeenCalledWith(expect.anything(), job.source, "backfill:3.3:1:preserved", v33Address);
+  });
+
   it("claims only jobs for the enabled assessment version", async () => {
     await runIndexerCycle(settings);
     expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "1", "1");

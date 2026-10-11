@@ -468,8 +468,11 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
 
 export async function claimAssessmentJob(
   client: Client, workerId: string, assessmentVersion: "1" | "2" | "3" = "1",
-  assessmentSchemaVersion: string = assessmentVersion,
+  assessmentSchemaVersion: string | readonly string[] = assessmentVersion,
 ): Promise<ClaimedJob | undefined> {
+  const assessmentSchemaVersions = Array.isArray(assessmentSchemaVersion)
+    ? assessmentSchemaVersion
+    : [assessmentSchemaVersion];
   await client.query("begin isolation level read committed");
   try {
     await client.query(`
@@ -510,7 +513,7 @@ export async function claimAssessmentJob(
       left join quorumx.backfill_runs on backfill_runs.id = candidate.backfill_run_id
       cross join backfill_usage
       cross join backfill_limit
-      where candidate.assessment_version = $2 and candidate.assessment_schema_version = $3
+      where candidate.assessment_version = $2 and candidate.assessment_schema_version = any($3::text[])
         and sources.assessment_enabled
         and (candidate.job_kind = 'live' or (backfill_runs.status = 'running'
           and backfill_usage.submitted_count + backfill_usage.reserved_count
@@ -572,7 +575,7 @@ export async function claimAssessmentJob(
        where revisions.id = jobs.revision_id),
       (select revisions.content_hash from quorumx.proposal_revisions revisions
        where revisions.id = jobs.revision_id)
-  `, [workerId, assessmentVersion, assessmentSchemaVersion]);
+  `, [workerId, assessmentVersion, assessmentSchemaVersions]);
     const row = result.rows[0];
     if (!row) {
       await client.query("commit");
