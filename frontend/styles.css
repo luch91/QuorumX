@@ -128,7 +128,7 @@ h2 { margin: 0; font-size: clamp(40px,5vw,70px); line-height: .98; letter-spacin
 .attention-card h3 { max-width: 770px; margin: 18px 0 14px; font-size: clamp(26px,3vw,42px); letter-spacing: -.035em; }
 .attention-reason { max-width: 760px; color: #4d4942; line-height: 1.55; }
 .attention-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
-.attention-card button, .attention-card a[data-open-proposal] { border: 0; padding: 0; background: none; color: var(--ink); font-weight: 750; text-decoration: underline; text-underline-offset: 5px; }
+.attention-card button, .attention-card a { border: 0; padding: 0; background: none; color: var(--ink); font-weight: 750; text-decoration: underline; text-underline-offset: 5px; }
 
 .filter-bar { display: grid; grid-template-columns: minmax(280px,1fr) repeat(3,auto) auto; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .filter-bar input, .filter-bar select { height: 44px; width: 100%; border: 1px solid var(--line); background: var(--ink-soft); color: var(--paper); padding: 0 40px 0 13px; border-radius: 0; }
@@ -193,13 +193,16 @@ h2 { margin: 0; font-size: clamp(40px,5vw,70px); line-height: .98; letter-spacin
 
 dialog { max-width: none; max-height: none; margin: 0; padding: 0; border: 0; color: inherit; background: transparent; }
 dialog::backdrop { background: rgba(0,0,0,.76); backdrop-filter: blur(5px); }
-.record-dialog[open] { width: 100%; height: 100%; }
-.dialog-shell { width: min(1320px, calc(100% - 44px)); min-height: calc(100vh - 44px); margin: 22px auto; position: relative; background: var(--paper); color: var(--ink); }
+.proposal-page { min-height: calc(100vh - 76px); background: var(--paper); color: var(--ink); }
+.proposal-page-shell { width: min(1320px, calc(100% - 44px)); min-height: calc(100vh - 120px); margin: 22px auto; background: var(--paper); color: var(--ink); }
+.proposal-back { display: inline-flex; min-height: 44px; align-items: center; padding: 0 clamp(20px, 4vw, 48px); color: #514b41; font-weight: 700; text-decoration: none; }
+.proposal-back:hover { color: var(--gold-dark); text-decoration: underline; text-underline-offset: 4px; }
+.proposal-back:focus-visible { outline: 3px solid var(--gold-dark); outline-offset: -3px; }
 .dialog-close { position: sticky; z-index: 5; float: right; top: 14px; right: 14px; width: 42px; height: 42px; border: 1px solid var(--line-light); background: var(--paper); color: var(--ink); font-size: 27px; }
 .record-loading { display: grid; min-height: 70vh; place-items: center; color: #605c54; }
 .record-hero { min-height: 330px; padding: 74px clamp(28px,6vw,90px) 55px; background-color: #090906; color: var(--paper); background-image: radial-gradient(circle at 75% 40%, rgba(217,173,79,.22), transparent 31%), radial-gradient(circle at 83% 37%, var(--gold) 0 1px, transparent 2px); background-size: auto, 11px 11px; }
 .record-kicker { color: var(--gold-bright); font: 700 12px var(--mono); text-transform: uppercase; letter-spacing: .12em; }
-.record-hero h2 { max-width: 900px; font-size: clamp(46px,6vw,86px); }
+.record-hero h1 { max-width: 900px; margin: .45em 0; font-size: clamp(46px,6vw,86px); overflow-wrap: anywhere; }
 .record-hero > p:last-child { max-width: 760px; color: var(--paper-soft); font-size: 17px; line-height: 1.5; }
 .due-diligence { padding: 38px 0 48px; }
 .due-diligence > h3 { margin: 44px 0 18px; font-size: clamp(27px, 3vw, 38px); letter-spacing: -.04em; }
@@ -249,7 +252,7 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
 .record-tabs { position: sticky; top: 0; z-index: 2; display: flex; gap: 30px; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; padding: 20px 3px; border-bottom: 1px solid var(--line-light); background: var(--paper); scrollbar-width: thin; }
 .record-tabs a { color: #59554e; text-decoration: none; font-size: 13px; }
 .record-body section { padding-top: 48px; }
-.record-body h3 { font-size: 32px; margin: 0 0 24px; }
+.record-body > section > h2, .record-body > section > h3 { font-size: 32px; margin: 0 0 24px; }
 .record-facts { display: grid; grid-template-columns: repeat(2,1fr); gap: 0; border-top: 1px solid var(--line-light); border-left: 1px solid var(--line-light); }
 .record-facts div { padding: 18px; border-right: 1px solid var(--line-light); border-bottom: 1px solid var(--line-light); }
 .record-facts dt { color: #6c675e; font: 11px var(--mono); text-transform: uppercase; }
@@ -336,8 +339,6 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
   .mobile-card-meta { display: flex; flex-wrap: wrap; gap: 7px; }
   .assessment-row { grid-template-columns: 1fr auto; padding: 17px 0; }
   .assessment-row > *:nth-child(2), .assessment-row > *:nth-child(4) { display: none; }
-  .record-layout { grid-template-columns: 1fr; }
-  .evidence-margin { border-left: 0; border-top: 1px solid var(--line-light); }
 }
 
 @media (max-width: 580px) {
@@ -359,9 +360,9 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
   .dao-grid { grid-template-columns: 1fr; }
   .method-steps li { grid-template-columns: 42px 1fr; }
   .site-footer { grid-template-columns: 1fr; gap: 8px; }
-  .dialog-shell { width: 100%; min-height: 100vh; margin: 0; }
+  .proposal-page-shell { width: 100%; min-height: 100vh; margin: 0; }
   .record-hero { min-height: 280px; padding: 70px 20px 40px; }
-  .record-hero h2 { font-size: clamp(34px,12vw,46px); overflow-wrap: anywhere; }
+  .record-hero h1 { font-size: clamp(34px,12vw,46px); }
   .record-body { padding: 0 20px 60px; }
   .record-facts { grid-template-columns: 1fr; }
   .evidence-margin { padding: 40px 20px; }
@@ -376,4 +377,9 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
   .hero-actions { margin-top: 18px; }
   .particle-stage { height: 240px; min-height: 240px; }
   .verification-path { bottom: 18px; }
+}
+
+@media (max-width: 1024px) {
+  .record-layout { grid-template-columns: minmax(0, 1fr); }
+  .evidence-margin { border-left: 0; border-top: 1px solid var(--line-light); }
 }

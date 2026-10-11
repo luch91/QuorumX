@@ -47,8 +47,16 @@ export default {
       if (!proposalResponse.ok) return secured(new Response(proposalResponse.status === 404 ? "Proposal not found" : "Proposal temporarily unavailable", { status: proposalResponse.status }));
       const proposal = (await proposalResponse.json()).data;
       const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+      const title = `${proposal.title} — QuorumX`;
+      const description = `QuorumX due diligence for ${proposal.title}.`;
+      const canonicalUrl = `https://quorumx.dev/proposals/${encodeURIComponent(canonicalId)}`;
       const fallback = `<main class="server-record"><p>${escape(proposal.daoName)} / ${escape(proposal.space)}</p><h1>${escape(proposal.title)}</h1><p>${escape(proposal.bodyText || "The canonical source contains no proposal body.")}</p><p><a href="${escape(proposal.canonicalUrl)}">Open canonical proposal</a></p></main>`;
-      const html = (await shell.text()).replace("<body", `<body data-direct-proposal="${escape(canonicalId)}"`).replace("</body>", `<noscript>${fallback}</noscript></body>`);
+      const html = (await shell.text())
+        .replace("<title>QuorumX — Governance due diligence</title>", `<title>${escape(title)}</title>`)
+        .replace('content="QuorumX indexes public DAO proposals and publishes inspectable, consensus-backed governance due diligence."', `content="${escape(description)}"`)
+        .replace('href="https://quorumx.dev/"', `href="${escape(canonicalUrl)}"`)
+        .replace("<body", `<body data-direct-proposal="${escape(canonicalId)}"`)
+        .replace("</body>", `<noscript>${fallback}</noscript></body>`);
       return secured(new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } }), "public, max-age=15, stale-while-revalidate=30");
     }
 
