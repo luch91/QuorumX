@@ -477,4 +477,62 @@ describe("QuorumX frontend helpers", () => {
     expect(html).toContain("Why this priority");
     expect(html).toContain("Questions requiring resolution");
   });
+
+  test("renders a grounded schema 3.4 Decision IR before claims and provenance without inventing BIP-933 facts", () => {
+    const excerpt = "The DAO multisig can recover the USDC by atomically calling `claimFees(FeeDistributor, USDC, DAO, 0)` four times. This is necessary because the grant has accumulated more than 60 weeks of unclaimed USDC, while the FeeDistributor settles at most 20 weeks per call.";
+    const html = renderDueDiligence({
+      assessmentVersion: "3", assessmentSchemaVersion: "3.4", externalEvidenceState: "not_attempted",
+      overview: { purpose: "Legacy overview must not lead this record.", requestedActions: [], assetsAffected: [], permissionsChanged: [], controlChanges: [] },
+      decisionIR: {
+        schemaVersion: "3.4", proposalObjective: "Recover unclaimed USDC FeeDistributor rewards.",
+        actions: [{ id: "claim-fees", operation: "token_claim", actor: "DAO multisig", function: "claimFees",
+          arguments: ["FeeDistributor", "USDC", "DAO", "0"], asset: "USDC", amount: "approximately 10,286.807445",
+          recipient: "DAO", frequency: "4 calls", conditions: [],
+          dependencies: ["the grant has accumulated more than 60 weeks of unclaimed USDC", "FeeDistributor settles at most 20 weeks per call"], sourceExcerpt: excerpt }],
+        claims: [], safeguards: [{ id: "recovery", subject: "Fee recovery", state: "present", sourceExcerpt: excerpt }],
+        executionConsequences: [{ id: "recovery", statement: "The DAO recovers unclaimed USDC rewards.", sourceExcerpt: excerpt }],
+        unknowns: [{ id: "target", subject: "The exact contract address", state: "unknown", sourceExcerpt: excerpt }],
+        evidenceReferences: [], grounding: { proposalObjective: "grounded", actions: [{ id: "claim-fees", state: "grounded", retained: true, fields: [] }] },
+      },
+      evidencePlan: { schemaVersion: "3.4", assessmentContext: "retrospective", source: { kind: "snapshot", space: "balancer.eth", proposalId: "0x" + "a".repeat(64) }, items: [{ id: "github", actionIds: ["claim-fees"], claimIds: [], adapter: "github_execution_pr", source: "github", locator: "https://github.com/balancer/multisig-ops/pull/2882", authority: "contextual", verificationScope: "validator_retrieved_external_source", temporalScope: "unknown", isExecutionProof: false }] },
+      evidence: [{ id: "proposal", type: "proposal", locator: "https://snapshot.box/#/s:balancer.eth/proposal/p1", description: "Snapshot proposal", contentHash: "a".repeat(64), verificationScope: "validator_retrieved_proposal", authority: "primary" }],
+      materialClaims: [{ id: "c1", claim: "Approximately 10,286.807445 USDC is unclaimed.", sourceExcerpt: "approximately 10,286.807445 USDC", counterExcerpt: "", claimScope: "external_factual", status: "unverified", explanation: "No independent state evidence is attached.", evidence: ["proposal"], confidence: "low" }],
+      safeguardGaps: [{ id: "sg1", safeguard: "Unused-funds recovery", state: "not_identified", scope: "reviewed material", evidence: ["proposal"], relatedActionIds: ["claim-fees"] }],
+      findings: [], executionMap: [],
+      unresolvedQuestions: [{ id: "q-action", question: "What concrete action is this proposal requesting?", whyItMatters: "Legacy extraction gap.", evidenceGap: "Legacy gap.", relatedFindingIds: [] }],
+      reviewPriority: "normal", reviewPriorityExplanation: "The claim remains unverified.",
+    });
+
+    expect(html).toContain("What is being proposed?");
+    expect(html).toContain("Recover unclaimed USDC FeeDistributor rewards.");
+    expect(html).toContain("How would it happen?");
+    expect(html).toContain("claimFees(FeeDistributor, USDC, DAO, 0)");
+    expect(html).toContain("Why four calls?");
+    expect(html).toContain("FeeDistributor settles at most 20 weeks per call");
+    expect(html).toContain("What QuorumX verified");
+    expect(html).toContain("Unverified");
+    expect(html).toContain("Safeguards");
+    expect(html).toContain("Not identified in reviewed material");
+    expect(html).toContain("What is still unknown?");
+    expect(html).toContain("The exact contract address");
+    expect(html).not.toContain("What concrete action is this proposal requesting?");
+    expect(html).toContain("Evidence selected for review");
+    expect(html.indexOf("What is being proposed?")).toBeLessThan(html.indexOf("Evidence and provenance"));
+    expect(html).not.toContain("Legacy overview must not lead this record.");
+  });
+
+  test("escapes schema 3.4 Decision IR text in decision-first sections", () => {
+    const html = renderDueDiligence({ assessmentVersion: "3", assessmentSchemaVersion: "3.4", externalEvidenceState: "not_attempted",
+      overview: { purpose: "ignored", requestedActions: [], assetsAffected: [], permissionsChanged: [], controlChanges: [] },
+      decisionIR: { schemaVersion: "3.4", proposalObjective: "<img src=x onerror=alert(1)>",
+        actions: [{ id: "a1", operation: "contract_call", actor: "<script>alert(1)</script>", function: "execute", arguments: ["<svg onload=alert(1)>"], conditions: [], dependencies: [], sourceExcerpt: "<b>untrusted</b>" }],
+        claims: [], safeguards: [], executionConsequences: [], unknowns: [{ id: "u1", subject: "<iframe>", state: "unknown", sourceExcerpt: "untrusted" }], evidenceReferences: [],
+        grounding: { proposalObjective: "grounded", actions: [{ id: "a1", state: "grounded", retained: true, fields: [] }] } },
+      evidencePlan: { schemaVersion: "3.4", assessmentContext: "live", source: { kind: "snapshot", space: "dao.eth", proposalId: "p1" }, items: [] },
+      evidence: [], materialClaims: [], findings: [], safeguardGaps: [], executionMap: [], unresolvedQuestions: [], reviewPriority: "low", reviewPriorityExplanation: "No issue." });
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<iframe>");
+  });
 });

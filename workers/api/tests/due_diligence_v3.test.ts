@@ -115,6 +115,26 @@ async function schema33Record() {
   return value;
 }
 
+async function schema34Record() {
+  const value: any = await schema33Record();
+  value.assessmentSchemaVersion = "3.4";
+  value.decisionIR = {
+    schemaVersion: "3.4", proposalObjective: "Recover unclaimed USDC rewards.",
+    actions: [{ id: "claim-fees", operation: "token_claim", sourceExcerpt: "Recover unclaimed USDC rewards.",
+      actor: "DAO multisig", function: "claimFees", arguments: ["0", "DAO", "FeeDistributor", "USDC"],
+      asset: "USDC", amount: "approximately 10,286.807445", recipient: "DAO", frequency: "4 calls",
+      conditions: [], dependencies: ["FeeDistributor settles at most 20 weeks per call"] }],
+    claims: [], safeguards: [{ id: "recovery", subject: "Fee recovery", state: "present", sourceExcerpt: "Recover unclaimed USDC rewards." }],
+    executionConsequences: [{ id: "recover", statement: "The DAO recovers USDC rewards.", sourceExcerpt: "Recover unclaimed USDC rewards." }],
+    unknowns: [{ id: "contract", subject: "Exact contract address", state: "unknown", sourceExcerpt: "Recover unclaimed USDC rewards." }],
+    evidenceReferences: [], grounding: { proposalObjective: "grounded", actions: [{ id: "claim-fees", state: "grounded", retained: true, fields: [] }] },
+  };
+  value.evidencePlan = { schemaVersion: "3.4", assessmentContext: "live", source: { kind: "snapshot", space: "dao.eth", proposalId: "p1" },
+    items: [{ id: "plan-1", actionIds: ["claim-fees"], claimIds: [], adapter: "ethereum_rpc_contract_state", source: "ethereum_rpc",
+      locator: "proposal:claimFees", authority: "contextual", verificationScope: "validator_retrieved_external_source", temporalScope: "unknown" }] };
+  return value;
+}
+
 async function temporalSchema33Record(scope: "historically_anchored" | "current_state_observed" = "historically_anchored") {
   const value: any = await schema33Record();
   Object.assign(value, { assessmentContext: "retrospective", proposalCloseTime: "2026-09-01T00:00:00Z",
@@ -189,6 +209,25 @@ describe("v3 due-diligence parser", () => {
     expect(parsed?.assessmentSchemaVersion).toBe("3.3");
     expect(parsed?.assessmentRunId).toBe("run-safe-p1-1");
     expect(parsed?.findings[0].safeguardGapIds).toEqual(["sg1"]);
+  });
+
+  it("accepts schema 3.4 Decision IR records without reinterpreting schema 3.3", async () => {
+    const parsed = await parseDueDiligenceV3(await schema34Record(), proposalKey);
+    expect(parsed?.assessmentSchemaVersion).toBe("3.4");
+    expect(parsed?.decisionIR?.actions[0].function).toBe("claimFees");
+    expect(parsed?.decisionIR?.grounding?.actions[0].retained).toBe(true);
+  });
+
+  it("rejects a schema 3.4 record without a grounded Decision IR", async () => {
+    const missing = await schema34Record();
+    delete missing.decisionIR;
+    await expect(parseDueDiligenceV3(missing, proposalKey)).rejects.toThrow("Decision IR");
+  });
+
+  it("rejects an evidence-plan adapter paired with the wrong bounded source", async () => {
+    const record = await schema34Record();
+    record.evidencePlan.items[0].source = "snapshot";
+    await expect(parseDueDiligenceV3(record, proposalKey)).rejects.toThrow("Invalid v3 evidence plan item");
   });
 
   it("rejects dangling schema 3.3 relationship IDs", async () => {
