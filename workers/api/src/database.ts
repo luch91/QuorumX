@@ -354,8 +354,14 @@ export async function ingestSnapshotProposals(
         set current_revision_id = $2, current_observation_id = $3, updated_at = $4
         where id = $1
       `, [proposalId, revisionId, observation.rows[0].id, now.toISOString()]);
+      // A schema upgrade must not turn every previously indexed revision into
+      // a new assessment.  Schema 3.4 is activated prospectively: it assesses
+      // newly indexed material, while explicit reassessments are created by
+      // the bounded reassessment path.  Earlier non-v1 formats retain their
+      // historical requeue behaviour for compatibility.
+      const requeueExistingRevision = assessmentVersion !== "1" && assessmentSchemaVersion !== "3.4";
       if (shouldAssess(proposal, now) && remainingBudget > 0
-        && (revisionInserted || assessmentVersion !== "1")) {
+        && (revisionInserted || requeueExistingRevision)) {
         const jobResult = await client.query(`
           insert into quorumx.assessment_jobs
             (revision_id, assessment_version, assessment_schema_version, assessment_run_id,
