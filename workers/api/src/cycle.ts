@@ -17,6 +17,8 @@ import {
   recordSourceFailure,
   recordSubmittedTransaction,
   withDatabase,
+  type ClaimedJob,
+  type IsolatedAssessmentClaim,
 } from "./database";
 import { DueDiligenceBoundaryError } from "./due_diligence";
 import type { CycleResult, StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "./domain";
@@ -47,6 +49,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function emptyCycleResult(): CycleResult {
+  return {
+    sourcesPolled: 0,
+    proposalsSeen: 0,
+    revisionsCreated: 0,
+    jobsCreated: 0,
+    transactionsRecovered: 0,
+    jobsProcessed: 0,
+    errors: [],
+  };
+}
+
 async function within<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -61,19 +75,71 @@ async function within<T>(operation: Promise<T>, timeoutMs: number, label: string
   }
 }
 
+async function processFormat3Job(
+  client: Parameters<typeof claimAssessmentJob>[0],
+  job: ClaimedJob,
+  settings: CycleSettings,
+  result: CycleResult,
+  callTimeout: number,
+): Promise<void> {
+  const assessmentRunId = job.assessmentRunId ?? `qx:v3:${job.revisionHash}`;
+  const contractAddress = job.assessmentSchemaVersion === "3.4"
+    ? settings.genlayer.dueDiligenceContracts?.["3.4"]
+    : settings.genlayer.dueDiligenceContracts?.["3.3"] ?? settings.genlayer.dueDiligenceV3ContractAddress;
+  if (!contractAddress) throw new Error(`V3 contract is not configured for schema ${job.assessmentSchemaVersion}`);
+  const intent = await prepareSubmissionIntent(client, job, assessmentRunId);
+  if (!intent.created && !intent.retryRearmed) {
+    const recovered = await within(findSubmittedTransaction(settings.genlayer, assessmentRunId, contractAddress), callTimeout, "submission_reconcile");
+    if (recovered) {
+      await recordSubmittedTransaction(client, job, recovered, "studionet", contractAddress);
+      result.transactionsRecovered += 1;
+    } else {
+      await markSubmissionUncertain(client, job);
+      result.errors.push(`job ${job.id}: submission_outcome_unknown`);
+    }
+    return;
+  }
+  const transactionId = await within(submitDueDiligenceV3(settings.genlayer, job.source, assessmentRunId, contractAddress), callTimeout, "assessment_submit");
+  await recordSubmittedTransaction(client, job, transactionId, "studionet", contractAddress);
+  result.jobsProcessed += 1;
+}
+
+/**
+ * Processes one explicitly selected schema-3.4 job without polling Snapshot,
+ * reconciling other transactions, or claiming ordinary/live/backfill work.
+ */
+export async function runIsolatedSchema34Canary(
+  settings: CycleSettings,
+  isolated: IsolatedAssessmentClaim,
+): Promise<CycleResult> {
+  if (!settings.enableWrites || !settings.genlayer.privateKey || !settings.genlayer.dueDiligenceContracts?.["3.4"]) {
+    throw new Error("schema_3_4_canary_not_configured");
+  }
+  const result = emptyCycleResult();
+  const callTimeout = settings.externalCallTimeoutMs ?? 15_000;
+  await withDatabase(settings.databaseUrl, async (client) => {
+    const job = await claimAssessmentJob(client, settings.workerId ?? crypto.randomUUID(), "3", "3.4", isolated);
+    if (!job) return;
+    if (job.proposalKey !== isolated.canonicalId || job.assessmentRunId !== isolated.assessmentRunId
+      || job.assessmentSchemaVersion !== "3.4" || job.jobKind !== "live") {
+      throw new Error("isolated_schema_3_4_claim_mismatch");
+    }
+    try {
+      await processFormat3Job(client, job, settings, result, callTimeout);
+    } catch (error) {
+      const message = errorMessage(error);
+      await markJobRetry(client, job, message);
+      result.errors.push(`job ${job.id}: ${message}`);
+    }
+  });
+  return result;
+}
+
 export async function runIndexerCycle(settings: CycleSettings): Promise<CycleResult> {
   const startedAt = Date.now();
   const callTimeout = settings.externalCallTimeoutMs ?? 15_000;
   const cycleBudget = settings.cycleBudgetMs ?? 50_000;
-  const result: CycleResult = {
-    sourcesPolled: 0,
-    proposalsSeen: 0,
-    revisionsCreated: 0,
-    jobsCreated: 0,
-    transactionsRecovered: 0,
-    jobsProcessed: 0,
-    errors: [],
-  };
+  const result = emptyCycleResult();
 
   await withDatabase(settings.databaseUrl, async (client) => {
     // A reverted transaction is final, but older releases could leave its job
@@ -231,26 +297,7 @@ export async function runIndexerCycle(settings: CycleSettings): Promise<CycleRes
         return;
       }
       if (job.assessmentVersion === "3") {
-        const assessmentRunId = job.assessmentRunId ?? `qx:v3:${job.revisionHash}`;
-        const contractAddress = job.assessmentSchemaVersion === "3.4"
-          ? settings.genlayer.dueDiligenceContracts?.["3.4"]
-          : settings.genlayer.dueDiligenceContracts?.["3.3"] ?? settings.genlayer.dueDiligenceV3ContractAddress;
-        if (!contractAddress) throw new Error(`V3 contract is not configured for schema ${job.assessmentSchemaVersion}`);
-        const intent = await prepareSubmissionIntent(client, job, assessmentRunId);
-        if (!intent.created && !intent.retryRearmed) {
-          const recovered = await within(findSubmittedTransaction(settings.genlayer, assessmentRunId, contractAddress), callTimeout, "submission_reconcile");
-          if (recovered) {
-            await recordSubmittedTransaction(client, job, recovered, "studionet", contractAddress);
-            result.transactionsRecovered += 1;
-          } else {
-            await markSubmissionUncertain(client, job);
-            result.errors.push(`job ${job.id}: submission_outcome_unknown`);
-          }
-          return;
-        }
-        const transactionId = await within(submitDueDiligenceV3(settings.genlayer, job.source, assessmentRunId, contractAddress), callTimeout, "assessment_submit");
-        await recordSubmittedTransaction(client, job, transactionId, "studionet", contractAddress);
-        result.jobsProcessed += 1;
+        await processFormat3Job(client, job, settings, result, callTimeout);
         return;
       }
       const existing = await within(readAssessment(settings.genlayer, job.proposalKey), callTimeout, "assessment_read");

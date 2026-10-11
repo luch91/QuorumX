@@ -3,6 +3,7 @@ import { canonicalJson, contractCanonicalJson, sha256 } from "./canonical";
 import type { SnapshotProposal, StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "./domain";
 import type { SnapshotSourceDefinition } from "./sources";
 import type { BackfillRunConfig, BackfillState } from "./backfill_types";
+import { assertSchema34CanaryIdentity } from "./schema34_canary";
 
 export interface IngestResult {
   proposalsSeen: number;
@@ -123,6 +124,15 @@ export interface ClaimedJob {
   assessmentSchemaVersion?: string;
   assessmentRunId?: string;
   jobKind?: "live" | "backfill";
+}
+
+/**
+ * A deliberately narrow selector for an operator-authorized schema-3.4
+ * canary. It is never used by ordinary ingestion or scheduled processing.
+ */
+export interface IsolatedAssessmentClaim {
+  canonicalId: string;
+  assessmentRunId: string;
 }
 
 export interface SubmittedJob {
@@ -469,10 +479,24 @@ export async function listSubmittedJobs(client: Client, limit = 5): Promise<Subm
 export async function claimAssessmentJob(
   client: Client, workerId: string, assessmentVersion: "1" | "2" | "3" = "1",
   assessmentSchemaVersion: string | readonly string[] = assessmentVersion,
+  isolated?: IsolatedAssessmentClaim,
 ): Promise<ClaimedJob | undefined> {
   const assessmentSchemaVersions = Array.isArray(assessmentSchemaVersion)
     ? assessmentSchemaVersion
     : [assessmentSchemaVersion];
+  if (isolated && (assessmentSchemaVersions.length !== 1 || assessmentSchemaVersions[0] !== "3.4"
+    || assessmentVersion !== "3" || !/^[A-Za-z0-9:._-]{1,120}$/.test(isolated.assessmentRunId))) {
+    throw new Error("invalid isolated assessment claim");
+  }
+  if (isolated) assertSchema34CanaryIdentity(isolated.canonicalId, isolated.assessmentRunId);
+  const isolatedWhere = isolated ? `
+        and candidate.assessment_schema_version = '3.4'
+        and candidate.job_kind = 'live'
+        and proposals.canonical_id = $4
+        and candidate.assessment_run_id = $5` : "";
+  const claimParameters = isolated
+    ? [workerId, assessmentVersion, assessmentSchemaVersions, isolated.canonicalId, isolated.assessmentRunId]
+    : [workerId, assessmentVersion, assessmentSchemaVersions];
   await client.query("begin isolation level read committed");
   try {
     await client.query(`
@@ -514,6 +538,7 @@ export async function claimAssessmentJob(
       cross join backfill_usage
       cross join backfill_limit
       where candidate.assessment_version = $2 and candidate.assessment_schema_version = any($3::text[])
+        ${isolatedWhere}
         and sources.assessment_enabled
         and (candidate.job_kind = 'live' or (backfill_runs.status = 'running'
           and backfill_usage.submitted_count + backfill_usage.reserved_count
@@ -575,7 +600,7 @@ export async function claimAssessmentJob(
        where revisions.id = jobs.revision_id),
       (select revisions.content_hash from quorumx.proposal_revisions revisions
        where revisions.id = jobs.revision_id)
-  `, [workerId, assessmentVersion, assessmentSchemaVersions]);
+  `, claimParameters);
     const row = result.rows[0];
     if (!row) {
       await client.query("commit");
@@ -624,6 +649,33 @@ export async function createReassessmentJob(
     on conflict (assessment_run_id) do nothing
     returning id::text
   `, [canonicalId, assessmentSchemaVersion, assessmentRunId]);
+  return result.rows[0]?.id;
+}
+
+/**
+ * Create exactly the designated schema-3.4 canary job. The fixed identity is
+ * enforced before the durable job, lease, idempotency, and immutable-record
+ * machinery is used.
+ */
+export async function createIsolatedSchema34CanaryJob(
+  client: Client, canonicalId: string, assessmentRunId: string,
+): Promise<string | undefined> {
+  assertSchema34CanaryIdentity(canonicalId, assessmentRunId);
+  const result = await client.query<{ id: string }>(`
+    insert into quorumx.assessment_jobs (
+      revision_id, assessment_version, assessment_schema_version, assessment_run_id,
+      is_initial_assessment, job_kind, status, available_at, created_at, updated_at
+    )
+    select revisions.id, '3', '3.4', $2, false, 'live', 'pending', now(), now(), now()
+    from quorumx.proposals proposals
+    join lateral (
+      select id from quorumx.proposal_revisions where proposal_id = proposals.id
+      order by fetched_at desc, id desc limit 1
+    ) revisions on true
+    where proposals.canonical_id = $1
+    on conflict (assessment_run_id) do nothing
+    returning id::text
+  `, [canonicalId, assessmentRunId]);
   return result.rows[0]?.id;
 }
 
