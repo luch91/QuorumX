@@ -175,7 +175,7 @@ runs its discovery cron every five minutes and exposes these documented routes:
 | `GET /` | Service identity and release/version information |
 | `GET /health` | Worker-to-database path and indexer counts |
 | `GET /health/live` | Dependency-free process liveness |
-| `GET /health/ready` | Database, source, queue, configuration, migration, and release-attestation readiness |
+| `GET /health/ready` | Database, source, queue, configuration, required migration-prerequisite, and release-attestation readiness |
 | `GET /v1/sources` | DAO metadata, ecosystems, assessment budgets, and polling health |
 | `GET /v1/proposals` | Cursor-paginated proposal index; supports status, space, source, DAO, author, assessment, and ecosystem filters |
 | `GET /v1/proposals/&lt;canonical-id&gt;` | Proposal, latest revision, transaction, and assessment details |
@@ -326,7 +326,7 @@ private keys, database credentials, or the admin token.
 - Rollback changes active Worker/configuration only. It must not rewrite or
   delete accepted records.
 
-Migrations currently run through `0013_bounded_format3_backfill.sql` . See the
+Migrations currently run through `0014_schema_3_4_assessment_jobs.sql` . See the
 [database documentation](database/README.md) and
 [operations runbook](docs/OPERATIONS.md) for provisioning, verification, and
 release procedures.
@@ -353,8 +353,7 @@ issues. See [SECURITY.md](SECURITY.md) .
 - [Operations runbook](docs/OPERATIONS.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
 - [Assessment format history](docs/FORMAT_HISTORY.md)
--
-  [Revision and assessment compatibility](docs/revision-and-assessment-compatibility.md)
+- [Revision and assessment compatibility](docs/revision-and-assessment-compatibility.md)
 - [Database architecture and migrations](database/README.md)
 - [Intelligent Contracts](contracts/README.md)
 - [API Worker and endpoint details](workers/api/README.md)

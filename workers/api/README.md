@@ -13,7 +13,7 @@ Current endpoints:
 - `GET /v2/proposals/<canonical-id>/due-diligence` retains format 2 compatibility.
 - `GET /v3/proposals/<canonical-id>/due-diligence` returns the latest accepted evidence-backed assessment.
 
-The checked-in Worker configuration selects public assessment format 3 and enables bounded writes. Local `.env.example` remains write-disabled. Format 1 and 2 records remain inspectable. Apply every migration through `0013_bounded_format3_backfill.sql` before deploying this Worker.
+The checked-in Worker configuration selects public assessment format 3 and enables bounded writes. Local `.env.example` remains write-disabled. Format 1 and 2 records remain inspectable. Apply every migration through `0014_schema_3_4_assessment_jobs.sql` before deploying this Worker.
 
 Ordinary production ingestion, cron cycles, reassessments, and job claiming remain pinned to internal schema 3.3. The schema 3.4 contract is deployed separately for isolated validation, but its BIP-933 canary has not reached consensus or produced an accepted assessment because Balancer's rolling live-assessment budget is full. Do not route ordinary jobs to schema 3.4 or treat job creation/runner HTTP success as acceptance. Resume the preserved canary only after rechecking durable state and available budget.
 
@@ -23,6 +23,16 @@ database/source/queue readiness plus the public release attestation. See the
 [release checklist](../../docs/RELEASE_CHECKLIST.md).
 
 `POST /internal/run` is an operations-only manual trigger protected by `QUORUMX_ADMIN_TOKEN`. The normal path is the cron: discover recent proposals from the allowlisted Balancer, SafeDAO, Arbitrum DAO, and ENS DAO Snapshot spaces; persist content-addressed revisions; apply per-source rolling 24-hour assessment budgets; atomically claim one eligible job; submit or recover its GenLayer transaction; and index readable matching contract state. Do not expose the admin token, signing key, or Neon connection string as a Worker variable or browser value.
+
+`POST /internal/reassess` is an authenticated schema 3.3 reassessment path. It
+accepts a canonical proposal ID and an optional unique assessment-run ID; it is
+not a schema 3.4 activation mechanism. The isolated schema 3.4 endpoints,
+`POST /internal/schema34-canary` and
+`POST /internal/schema34-canary/run`, require the exact configured BIP-933
+canonical ID and configured unique run ID. They reject all other proposals and
+do not use the ordinary scheduler or claim unrelated jobs. They are a
+one-canary operational path, not public API endpoints or a general reassessment
+interface.
 
 `POST /internal/backfill` uses the same admin authentication. Create a `dry-run`
 first, inspect its exact per-DAO report, then `start` that run ID. The endpoint

@@ -91,8 +91,8 @@ Deployment transaction:
 0x5e28c52d72839867ae880af5bef40121faad5b1d20f88b45d404e3c8306a58d6
 ~~~
 
-Schema 3.4 adds a grounded Decision IR and deterministic evidence plan to each
-new immutable record while retaining bounded Safe configuration checks. Its
+Schema 3.4 adds a grounded Decision IR and deterministic evidence plan to newly
+accepted immutable records while retaining bounded Safe configuration checks. Its
 declared consensus method is `deterministic_grounded_candidate_v3_4` .
 
 **Schema 3.4 is not the ordinary production route.** The API Worker continues to
