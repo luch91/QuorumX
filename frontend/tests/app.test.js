@@ -173,7 +173,8 @@ describe("QuorumX frontend helpers", () => {
     expect(html).toContain('class="skip-link" href="#proposals">Skip to proposals</a>');
     expect(html).toContain('id="proposals" tabindex="-1"');
     expect(html).toContain('data-proposal-page hidden');
-    expect(html).toContain('class="proposal-back" href="/#proposals"');
+    expect(html).not.toContain('class="proposal-back"');
+    expect(html).toContain('class="proposal-close" href="/#proposals" aria-label="Return to proposals"');
     expect(html).not.toContain('data-record-dialog');
     expect(html).toContain('id="record-loading" data-record-loading role="status" aria-live="polite"');
     expect((html.match(/aria-busy="true"/g) ?? []).length).toBeGreaterThanOrEqual(4);
@@ -209,6 +210,9 @@ describe("QuorumX frontend helpers", () => {
   test("contains long Whimsy content and exposes record tabs at narrow widths", () => {
     const css = readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
     expect(css).toMatch(/\.record-tabs[^}]*overflow-x: auto/);
+    expect(css).toMatch(/\.record-tabs a[^}]*flex: 0 0 auto/);
+    expect(css).toMatch(/\.record-tabs a[^}]*white-space: nowrap/);
+    expect(css).toMatch(/\.proposal-close[^}]*position: absolute/);
     expect(css).toMatch(/\.proposal-copy[^}]*overflow-wrap: anywhere/);
     expect(css).toMatch(/:focus-visible \{ outline: 3px solid/);
   });
