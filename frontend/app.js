@@ -458,6 +458,33 @@
 
   function closeDialog(dialog) { dialog.close(); document.body.classList.remove("dialog-open"); }
 
+  function setupRecordTabs() {
+    const tabs = $$(".record-tabs a");
+    if (!tabs.length) return;
+    const markActive = (id) => {
+      tabs.forEach((tab) => {
+        const active = tab.getAttribute("href") === `#${id}`;
+        tab.classList.toggle("is-active", active);
+        if (active) tab.setAttribute("aria-current", "location");
+        else tab.removeAttribute("aria-current");
+      });
+    };
+    const fromHash = () => markActive(location.hash.slice(1) || "record-overview");
+    tabs.forEach((tab) => tab.addEventListener("click", () => markActive(tab.getAttribute("href")?.slice(1) || "record-overview")));
+    window.addEventListener("hashchange", fromHash);
+    fromHash();
+    if (!("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (visible) markActive(visible.target.id);
+    }, { rootMargin: "-30% 0px -60%", threshold: 0 });
+    tabs.forEach((tab) => {
+      const section = document.querySelector(tab.getAttribute("href"));
+      if (section) observer.observe(section);
+    });
+    window.addEventListener("pagehide", () => observer.disconnect(), { once: true });
+  }
+
   function setupDelegatedActions() {
     document.addEventListener("click", (event) => {
       if (event.target.closest("[data-retry-proposals]")) loadProposals(false, state.search ? 100 : 24);
@@ -714,6 +741,7 @@
         $("[data-proposal-page]").hidden = false;
         renderProposalError({ status: 400 });
       } else loadProposalPage(routeCanonicalId);
+      setupRecordTabs();
       return;
     }
     const params = new URLSearchParams(location.search);
