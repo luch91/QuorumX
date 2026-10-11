@@ -48,7 +48,7 @@ import {
   markSubmissionUncertain,
 } from "../src/database";
 import { DueDiligenceBoundaryError } from "../src/due_diligence";
-import { runIndexerCycle } from "../src/cycle";
+import { runIndexerCycle, runIsolatedSchema34Canary } from "../src/cycle";
 import { findSubmittedTransaction, getTransactionState, readAssessment, readDueDiligence, readDueDiligenceV3, submitAssessment, submitDueDiligence, submitDueDiligenceV3 } from "../src/genlayer";
 import { fetchOpenSnapshotProposalPage, fetchSnapshotProposalsByIds } from "../src/snapshot";
 import type { StoredAssessment, StoredDueDiligenceAssessment, StoredDueDiligenceV3Assessment } from "../src/domain";
@@ -294,6 +294,39 @@ describe("indexer cycle", () => {
     expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "1", "1");
     await runIndexerCycle({ ...settings, assessmentVersion: "2" });
     expect(claimAssessmentJob).toHaveBeenLastCalledWith(expect.anything(), expect.any(String), "2", "2");
+  });
+
+  it("processes only the explicit schema-3.4 canary without polling or claiming unrelated work", async () => {
+    const v34Address = "0x4444444444444444444444444444444444444444" as const;
+    const transaction = `0x${"e".repeat(64)}`;
+    const canary = { canonicalId: "snapshot:balancer.eth:p1", assessmentRunId: "schema34-canary:bip933:test" };
+    jest.mocked(claimAssessmentJob).mockResolvedValue({ ...job, assessmentVersion: "3", assessmentSchemaVersion: "3.4",
+      assessmentRunId: canary.assessmentRunId, jobKind: "live" });
+    jest.mocked(submitDueDiligenceV3).mockResolvedValueOnce(transaction);
+
+    await runIsolatedSchema34Canary({ ...settings, assessmentVersion: "3", assessmentSchemaVersion: "3.3",
+      genlayer: { ...settings.genlayer, dueDiligenceContracts: { "3.4": v34Address } } }, canary);
+
+    expect(claimAssessmentJob).toHaveBeenCalledWith(expect.anything(), expect.any(String), "3", "3.4", canary);
+    expect(fetchOpenSnapshotProposalPage).not.toHaveBeenCalled();
+    expect(listSubmittedJobs).not.toHaveBeenCalled();
+    expect(submitDueDiligenceV3).toHaveBeenCalledWith(expect.anything(), job.source, canary.assessmentRunId, v34Address);
+  });
+
+  it("reconciles a canary idempotency intent without creating a duplicate transaction", async () => {
+    const v34Address = "0x4444444444444444444444444444444444444444" as const;
+    const recovered = `0x${"f".repeat(64)}`;
+    const canary = { canonicalId: "snapshot:balancer.eth:p1", assessmentRunId: "schema34-canary:bip933:recover" };
+    jest.mocked(claimAssessmentJob).mockResolvedValue({ ...job, assessmentVersion: "3", assessmentSchemaVersion: "3.4",
+      assessmentRunId: canary.assessmentRunId, jobKind: "live" });
+    jest.mocked(prepareSubmissionIntent).mockResolvedValueOnce({ created: false, state: "prepared" });
+    jest.mocked(findSubmittedTransaction).mockResolvedValueOnce(recovered);
+
+    await runIsolatedSchema34Canary({ ...settings, assessmentVersion: "3", assessmentSchemaVersion: "3.3",
+      genlayer: { ...settings.genlayer, dueDiligenceContracts: { "3.4": v34Address } } }, canary);
+
+    expect(submitDueDiligenceV3).not.toHaveBeenCalled();
+    expect(recordSubmittedTransaction).toHaveBeenCalledWith(expect.anything(), expect.anything(), recovered, "studionet", v34Address);
   });
 
   it("skips a source while its persisted failure backoff is active", async () => {

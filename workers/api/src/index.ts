@@ -1,12 +1,13 @@
 import type { Client } from "pg";
 import { getAssessment, getDueDiligence, getDueDiligenceV3, getProposal, listProposals, listSources } from "./api";
-import { runIndexerCycle } from "./cycle";
-import { createReassessmentJob, withDatabase } from "./database";
+import { runIndexerCycle, runIsolatedSchema34Canary } from "./cycle";
+import { createIsolatedSchema34CanaryJob, createReassessmentJob, withDatabase } from "./database";
 import { getBackfillRun, setBackfillRunStatus, startBackfillRun } from "./database";
 import { parseBackfillCommand, prepareBackfillDryRun, summarizeBackfill } from "./backfill";
 import { snapshotSourceForSpace, validateMultiDaoCoverage } from "./sources";
 import { cycleOutcome } from "./operational";
 import { secureEqual } from "./admin_auth";
+import { SCHEMA34_CANARY_BIP933, SCHEMA34_CANARY_RUN_ID } from "./schema34_canary";
 
 const CONTRACT_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const PRIVATE_KEY = /^0x[0-9a-fA-F]{64}$/;
@@ -33,7 +34,7 @@ function pathValue(value: string): string {
   }
 }
 
-function cycleSettings(env: Env) {
+export function cycleSettings(env: Env) {
   const configuredVersion: string = env.QUORUMX_ASSESSMENT_VERSION;
   // `String` deliberately widens the generated local binding type: production
   // activation supplies the immutable schema-3.4 address only after contract
@@ -46,14 +47,13 @@ function cycleSettings(env: Env) {
   if (configuredVersion === "2" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_CONTRACT_ADDRESS)) {
     throw new Error("V2 contract address is invalid");
   }
-  if (configuredVersion === "3" && configuredSchema !== "3.3" && configuredSchema !== "3.4") {
-    throw new Error("Format 3 assessment schema is invalid");
+  // Ordinary ingestion is permanently pinned to the proven schema-3.3 path.
+  // Schema 3.4 can only run through the separately gated BIP-933 canary path.
+  if (configuredVersion === "3" && configuredSchema !== "3.3") {
+    throw new Error("ordinary ingestion must use schema 3.3");
   }
-  if (configuredVersion === "3" && configuredSchema === "3.3" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)) {
+  if (configuredVersion === "3" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_CONTRACT_ADDRESS)) {
     throw new Error("V3 contract address is invalid");
-  }
-  if (configuredVersion === "3" && configuredSchema === "3.4" && !CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_4_CONTRACT_ADDRESS)) {
-    throw new Error("V3.4 contract address is invalid");
   }
   if (!PRIVATE_KEY.test(env.QUORUMX_GENLAYER_PRIVATE_KEY)) throw new Error("GenLayer signing key is invalid");
   const snapshotLimit = Number(env.QUORUMX_SNAPSHOT_LIMIT);
@@ -92,6 +92,22 @@ function cycleSettings(env: Env) {
       privateKey: env.QUORUMX_GENLAYER_PRIVATE_KEY as `0x${string}`,
       ...(env.QUORUMX_GENLAYER_RPC_URL ? { rpcUrl: env.QUORUMX_GENLAYER_RPC_URL } : {}),
     },
+  };
+}
+
+function schema34CanarySettings(env: Env, canonicalId: unknown, assessmentRunId: unknown) {
+  if (canonicalId !== SCHEMA34_CANARY_BIP933) throw new RangeError("schema34_canary_proposal_not_allowed");
+  const configuredRunId = String(env.QUORUMX_SCHEMA34_CANARY_RUN_ID ?? "");
+  if (!SCHEMA34_CANARY_RUN_ID.test(configuredRunId)) throw new Error("schema34_canary_not_configured");
+  if (assessmentRunId !== configuredRunId) throw new RangeError("schema34_canary_run_id_not_allowed");
+  if (!CONTRACT_ADDRESS.test(env.QUORUMX_DUE_DILIGENCE_V3_4_CONTRACT_ADDRESS)) {
+    throw new Error("schema34_canary_not_configured");
+  }
+  const ordinary = cycleSettings(env);
+  return {
+    ...ordinary,
+    assessmentVersion: "3" as const,
+    assessmentSchemaVersion: "3.4",
   };
 }
 
@@ -214,6 +230,33 @@ async function route(request: Request, env: Env): Promise<Response> {
       (client) => createReassessmentJob(client, canonicalId, schema, runId));
     return jobId ? json({ jobId, assessmentRunId: runId }, { status: 202 })
       : json({ error: "proposal_not_found_or_duplicate_run" }, { status: 409 });
+  }
+  if ((url.pathname === "/internal/schema34-canary" || url.pathname === "/internal/schema34-canary/run") && request.method === "POST") {
+    const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+    if (!await secureEqual(provided, env.QUORUMX_ADMIN_TOKEN)) return json({ error: "unauthorized" }, { status: 401 });
+    let body: { canonicalId?: unknown; assessmentRunId?: unknown };
+    try {
+      body = await request.json() as { canonicalId?: unknown; assessmentRunId?: unknown };
+    } catch {
+      return json({ error: "invalid_json" }, { status: 400 });
+    }
+    let settings;
+    try {
+      settings = schema34CanarySettings(env, body.canonicalId, body.assessmentRunId);
+    } catch (error) {
+      return json({ error: error instanceof RangeError ? error.message : "schema34_canary_not_configured" },
+        { status: error instanceof RangeError ? 400 : 409 });
+    }
+    const canonicalId = body.canonicalId as string;
+    const assessmentRunId = body.assessmentRunId as string;
+    if (url.pathname === "/internal/schema34-canary") {
+      const jobId = await withDatabase(env.HYPERDRIVE.connectionString,
+        (client) => createIsolatedSchema34CanaryJob(client, canonicalId, assessmentRunId));
+      return jobId ? json({ jobId, assessmentRunId, schema: "3.4" }, { status: 202 })
+        : json({ error: "schema34_canary_duplicate_or_missing" }, { status: 409 });
+    }
+    const result = await runIsolatedSchema34Canary(settings, { canonicalId, assessmentRunId });
+    return json({ ...result, assessmentRunId, schema: "3.4" }, { status: result.errors.length ? 207 : 200 });
   }
   if (url.pathname === "/internal/backfill" && request.method === "POST") {
     const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";

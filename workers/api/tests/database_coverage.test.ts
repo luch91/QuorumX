@@ -1,4 +1,4 @@
-import { claimAssessmentJob, createBackfillDryRun, nextSnapshotScanState } from "../src/database";
+import { claimAssessmentJob, createBackfillDryRun, createIsolatedSchema34CanaryJob, nextSnapshotScanState } from "../src/database";
 
 describe("durable proposal coverage", () => {
   const initial = { generation: 1, skip: 0, newProposalCount: 0, stableSweepCount: 0,
@@ -44,6 +44,35 @@ describe("durable proposal coverage", () => {
     expect(sql).toContain("proposals.voting_ends_at asc nulls last");
     expect(sql).toContain("revisions.created_at asc");
     expect(sql).toContain("candidate.id asc");
+  });
+
+  it("uses an explicit selector for an isolated schema-3.4 canary claim", async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    const canonicalId = "snapshot:balancer.eth:0x5a66f49d3aa02d9474e13acd1e6ac81d4a93398a8df0ec6b3adbe5170a74d3d8";
+    const assessmentRunId = "schema34-canary:bip933:e70e0a83";
+    await claimAssessmentJob(client as never, "canary", "3", "3.4", { canonicalId, assessmentRunId });
+    const call = client.query.mock.calls.find((entry) => String(entry[0]).includes("eligible_candidate"));
+    expect(call[0]).toContain("candidate.assessment_schema_version = '3.4'");
+    expect(call[0]).toContain("candidate.job_kind = 'live'");
+    expect(call[1]).toEqual(["canary", "3", ["3.4"], canonicalId, assessmentRunId]);
+  });
+
+  it("creates a non-initial live schema-3.4 canary with durable run-id idempotency", async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [{ id: "1701" }] }) };
+    const id = await createIsolatedSchema34CanaryJob(client as never,
+      "snapshot:balancer.eth:0x5a66f49d3aa02d9474e13acd1e6ac81d4a93398a8df0ec6b3adbe5170a74d3d8", "schema34-canary:bip933:e70e0a83");
+    expect(id).toBe("1701");
+    const sql = client.query.mock.calls[0][0];
+    expect(sql).toContain("'3.4'");
+    expect(sql).toContain("false, 'live', 'pending'");
+    expect(sql).toContain("on conflict (assessment_run_id) do nothing");
+  });
+
+  it("rejects arbitrary proposals from the isolated schema-3.4 path", async () => {
+    const client = { query: jest.fn() };
+    await expect(createIsolatedSchema34CanaryJob(client as never, "snapshot:safe.eth:other", "schema34-canary:bip933:e70e0a83"))
+      .rejects.toThrow("schema34_canary_proposal_not_allowed");
+    expect(client.query).not.toHaveBeenCalled();
   });
 
   it("reports pre-existing accepted format 3 records as skipped", async () => {
