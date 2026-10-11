@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -69,31 +70,23 @@ def test_v34_normalization_boundary_is_deterministic_in_genvm(direct_vm, direct_
     assert result["actions"][0]["function"] == "claimFees"
 
 
-def test_v34_semantic_extraction_requires_matching_validator_normalization(direct_vm, direct_deploy):
+def test_v34_semantic_validation_protocol_accepts_only_an_explicit_acceptance():
+    source = (Path(__file__).parents[1] / "decision_ir_v3_4.py").read_text(encoding="utf-8")
+    assert "Do not create a replacement Decision IR" in source
+    assert "Do not require identical wording" in source
+    assert 'set(raw.keys()) == {"acceptable"}' in source
+
+
+def test_v34_semantic_validation_rejects_an_incorrect_or_incomplete_candidate(direct_vm, direct_deploy):
     contract = direct_deploy(
         "contracts/decision_ir_v3_4.py",
         sdk_version=GENVM_SDK_VERSION,
     )
-    direct_vm.mock_llm(r".*Decision IR.*", json.dumps(candidate()))
-
-    result = json.loads(contract.extract(MATERIAL))
-
-    assert result["actions"][0]["operation"] == "token_claim"
-    assert direct_vm.run_validator() is True
-
-
-def test_v34_semantic_extraction_rejects_a_different_valid_validator_ir(direct_vm, direct_deploy):
-    contract = direct_deploy(
-        "contracts/decision_ir_v3_4.py",
-        sdk_version=GENVM_SDK_VERSION,
-    )
-    direct_vm.mock_llm(r".*Decision IR.*", json.dumps(candidate()))
+    direct_vm.mock_llm(r".*Extract only the JSON Decision IR schema below.*", json.dumps(candidate()))
     contract.extract(MATERIAL)
 
-    different = candidate()
-    different["actions"][0]["operation"] = "contract_call"
     direct_vm.clear_mocks()
-    direct_vm.mock_llm(r".*Decision IR.*", json.dumps(different))
+    direct_vm.mock_llm(r".*Review the proposed Decision IR.*", json.dumps({"acceptable": False}))
 
     assert direct_vm.run_validator() is False
 

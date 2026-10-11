@@ -185,7 +185,7 @@ export interface StoredDueDiligenceV3Assessment {
     safeguardGapIds?: string[]; relatedActionIds?: string[]; relatedClaimIds?: string[];
     humanDependencies: string[]; technicalDependencies: string[];
     reversible: boolean | "partial" | "unknown"; uncertainty: string;
-    consensus: { state: "accepted"; method: "independent_structured_derivation_v3" | "independent_structured_derivation_v3_3" };
+    consensus: { state: "accepted"; method: "independent_structured_derivation_v3" | "independent_structured_derivation_v3_3" | "candidate_validated_structured_ir_v3_4" };
   }>;
   safeguardGaps: Array<{ id?: string; safeguard: string; state: "present" | "explicitly_absent" | "not_identified" | "unknown"; scope: string; explanation?: string; confidence?: "low" | "medium" | "high"; relatedActionIds: string[]; relatedFindingIds?: string[]; relatedExecutionStepIds?: string[]; evidence: string[] }>;
   executionMap: Array<{
@@ -198,7 +198,7 @@ export interface StoredDueDiligenceV3Assessment {
   reviewPriorityExplanation: string;
   assessedAt: string;
   provenance: "live" | "fixture";
-  consensus: { state: "accepted"; method: "independent_structured_derivation_v3" | "independent_structured_derivation_v3_3" };
+  consensus: { state: "accepted"; method: "independent_structured_derivation_v3" | "independent_structured_derivation_v3_3" | "candidate_validated_structured_ir_v3_4" };
 }
 
 export interface CycleResult {
