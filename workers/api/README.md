@@ -1,6 +1,6 @@
 # QuorumX API Worker
 
-The Cloudflare Worker is the v0.4 multi-DAO governance indexer and public API. It is deployed at <https://api.quorumx.dev>, runs every five minutes, and connects to Neon exclusively through the `HYPERDRIVE` binding.
+The Cloudflare Worker is the multi-DAO governance indexer and public API. It is deployed at <https://api.quorumx.dev>, runs every five minutes, and connects to Neon exclusively through the `HYPERDRIVE` binding.
 
 Current endpoints:
 
@@ -13,10 +13,9 @@ Current endpoints:
 - `GET /v2/proposals/<canonical-id>/due-diligence` retains format 2 compatibility.
 - `GET /v3/proposals/<canonical-id>/due-diligence` returns the latest accepted evidence-backed assessment.
 
-The checked-in Worker configuration selects assessment format 3 and enables
-writes. Local `.env.example` remains write-disabled. Format 1 and 2 records remain
-inspectable. Apply every migration through `0013_bounded_format3_backfill.sql`
-before deploying this Worker.
+The checked-in Worker configuration selects public assessment format 3 and enables bounded writes. Local `.env.example` remains write-disabled. Format 1 and 2 records remain inspectable. Apply every migration through `0013_bounded_format3_backfill.sql` before deploying this Worker.
+
+Ordinary production ingestion, cron cycles, reassessments, and job claiming remain pinned to internal schema 3.3. The schema 3.4 contract is deployed separately for isolated validation, but its BIP-933 canary has not reached consensus or produced an accepted assessment because Balancer's rolling live-assessment budget is full. Do not route ordinary jobs to schema 3.4 or treat job creation/runner HTTP success as acceptance. Resume the preserved canary only after rechecking durable state and available budget.
 
 `GET /health/live` is dependency-free liveness. `GET /health/ready` reports
 database/source/queue readiness plus the public release attestation. See the
