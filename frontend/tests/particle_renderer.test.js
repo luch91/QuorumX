@@ -43,7 +43,7 @@ describe("Three.js particle renderer integration", () => {
     const css = source("frontend/styles.css");
 
     expect(html).toMatch(/particles\.js[\s\S]*?app\.js/);
-    expect(html).toMatch(/rel="modulepreload" href="particle_renderer\.bundle\.js"/);
+    expect(html).toMatch(/rel="modulepreload" href="\/particle_renderer\.bundle\.js"/);
     expect(html).toMatch(/id="dao-particles"[\s\S]*?id="dao-particles-gpu"/);
     expect(html).not.toMatch(/modulepreload[^>]+vendor\/three/);
     expect(app).toContain('import("./particle_renderer.bundle.js")');

@@ -9,6 +9,9 @@ const {
   renderDueDiligence,
   resolveApiBase,
   proposalPath,
+  proposalRoute,
+  proposalRow,
+  mobileProposal,
   isCurrentRequest,
   mergeUniqueProposals,
   particleBudget,
@@ -169,9 +172,38 @@ describe("QuorumX frontend helpers", () => {
     const html = readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
     expect(html).toContain('class="skip-link" href="#proposals">Skip to proposals</a>');
     expect(html).toContain('id="proposals" tabindex="-1"');
-    expect(html).toContain('aria-labelledby="record-dialog-title"');
+    expect(html).toContain('data-proposal-page hidden');
+    expect(html).toContain('class="proposal-back" href="/#proposals"');
+    expect(html).not.toContain('data-record-dialog');
     expect(html).toContain('id="record-loading" data-record-loading role="status" aria-live="polite"');
     expect((html.match(/aria-busy="true"/g) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+
+  test("recognizes only canonical proposal page routes", () => {
+    expect(proposalRoute("/proposals/snapshot%3Asafe.eth%3Aabc")).toBe("snapshot:safe.eth:abc");
+    expect(proposalRoute("/proposals/")).toBeNull();
+    expect(proposalRoute("/proposals/%E0%A4%A")).toBeUndefined();
+    expect(proposalRoute("/")).toBeNull();
+  });
+
+  test("renders proposal list entries as normal, shareable proposal links", () => {
+    const proposal = {
+      canonicalId: "snapshot:balancer.eth:proposal 1",
+      title: "Claim fees",
+      daoName: "Balancer",
+      daoLogoUrl: "https://cdn.example.test/logo.svg",
+      status: "active",
+      assessmentVersion: "3",
+      assessmentStatus: "finalized",
+      votingEndsAt: "2026-10-12T00:00:00.000Z",
+    };
+    const path = "/proposals/snapshot%3Abalancer.eth%3Aproposal%201";
+
+    [proposalRow(proposal), mobileProposal(proposal)].forEach((markup) => {
+      expect(markup).toContain(`href=\"${path}\"`);
+      expect(markup).not.toContain("data-open-proposal");
+      expect(markup).not.toContain("role=\"button\"");
+    });
   });
 
   test("contains long Whimsy content and exposes record tabs at narrow widths", () => {
