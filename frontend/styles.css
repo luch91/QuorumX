@@ -271,9 +271,10 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
 .proposal-copy blockquote, .source-markdown blockquote { margin: 1em 0; padding-left: 14px; border-left: 2px solid var(--gold); color: #514b41; }
 .proposal-copy a, .source-markdown a { color: #725019; overflow-wrap: anywhere; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .proposal-copy a:focus-visible, .source-markdown a:focus-visible { outline: 2px solid var(--gold-dark); outline-offset: 3px; }
-.proposal-copy code, .source-markdown code { padding: .12em .32em; border-radius: 3px; background: #eee8dc; font: .9em var(--mono); overflow-wrap: anywhere; }
-.proposal-copy pre, .source-markdown pre { max-width: 100%; overflow-x: auto; padding: 14px; background: #eee8dc; border-radius: 3px; }
-.proposal-copy pre code, .source-markdown pre code { padding: 0; background: transparent; overflow-wrap: normal; }
+.proposal-copy code, .source-markdown code { padding: .12em .32em; border-radius: 3px; background: #eee8dc; font: .9em var(--mono); white-space: break-spaces; overflow-wrap: anywhere; }
+.proposal-copy pre, .source-markdown pre { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; -webkit-overflow-scrolling: touch; padding: 14px; background: #eee8dc; border-radius: 3px; }
+.proposal-copy pre code, .source-markdown pre code { padding: 0; background: transparent; white-space: pre; overflow-wrap: normal; }
+.source-markdown, .source-markdown > *, .due-item dl > dd, .due-evidence dl > dd, .evidence-item > * { min-width: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
 .source-markdown { white-space: normal; }
 .due-diligence, .due-item, .due-item dd, .due-evidence, .record-hero, .dao-card { min-width: 0; overflow-wrap: anywhere; }
 .evidence-margin { padding: 52px 34px; border-left: 1px solid var(--line-light); background: #e7e2d8; }
