@@ -9,6 +9,8 @@ const {
   assessmentRecordLabel,
   assessmentCount,
   assessmentRow,
+  claimStatusPresentation,
+  externalEvidencePresentation,
   renderDueDiligence,
   resolveApiBase,
   proposalPath,
@@ -64,6 +66,55 @@ describe("QuorumX frontend helpers", () => {
       expect(html).toContain("assessment-summary");
       expect(html).toContain("Proposal-grounded due diligence");
       expect(readFileSync(path.join(__dirname, "..", "styles.css"), "utf8")).toContain("grid-template-areas: \"summary arrow\"");
+    });
+  });
+
+  describe("material claim presentation", () => {
+    const baseAssessment = (materialClaims, extra = {}) => ({
+      assessmentVersion: "3", assessmentSchemaVersion: "3.3", externalEvidenceState: "retrieved",
+      overview: { purpose: "Review claims.", requestedActions: [], assetsAffected: [], permissionsChanged: [], controlChanges: [] },
+      evidence: [{ id: "proposal", type: "proposal", locator: "https://snapshot.box/p1", description: "Snapshot proposal", contentHash: "a".repeat(64), verificationScope: "validator_retrieved_proposal", authority: "primary" }, { id: "independent", type: "onchain", locator: "https://eth.blockscout.com/tx/0x" + "1".repeat(64), description: "Reviewed transaction", contentHash: "b".repeat(64), verificationScope: "validator_retrieved_external_source", authority: "secondary" }],
+      materialClaims, findings: [], executionMap: [], unresolvedQuestions: [], safeguardGaps: [], reviewPriority: "low", reviewPriorityExplanation: "No material consequence was established.", ...extra,
+    });
+
+    test("presents BIP-933-style unverified claims once with source and evidence clearly separated", () => {
+      const claim = "Approximately 10,286.807445 USDC remains unclaimed.";
+      const html = renderDueDiligence(baseAssessment([{ id: "bip-933", claim, sourceExcerpt: "The proposal states approximately 10,286.807445 USDC remains unclaimed.", claimScope: "external_factual", proposalAssertion: true, status: "unverified", explanation: "No independent state evidence is attached.", evidence: ["proposal"], confidence: "low" }]));
+
+      expect(html.match(new RegExp(claim.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&"), "g"))?.length).toBe(1);
+      expect(html).toContain("Unverified");
+      expect(html).toContain("Proposal assertion");
+      expect(html).toContain("It is not presented as false.");
+      expect(html).toContain("QuorumX finding");
+      expect(html).toContain("Original source excerpt");
+      expect(html).toContain('href="#evidence-proposal"');
+      expect(html).toContain("Qualitative assessment label; not a probability.");
+      expect(html).toContain("Inconclusive verification");
+    });
+
+    test("keeps supported, partial, and contradicted outcomes distinct without changing their records", () => {
+      const html = renderDueDiligence(baseAssessment([
+        { id: "supported", claim: "Supported claim", sourceExcerpt: "Supported source", claimScope: "external_factual", status: "supported", explanation: "Evidence matches.", evidence: ["independent"], confidence: "high" },
+        { id: "partial", claim: "Partial claim", sourceExcerpt: "Partial source", claimScope: "external_factual", status: "partially_supported", explanation: "Only part matches.", evidence: ["independent"], confidence: "medium" },
+        { id: "contradicted", claim: "Contradicted claim", sourceExcerpt: "Claim source", counterExcerpt: "Counter source", claimScope: "external_factual", status: "contradicted", explanation: "Evidence conflicts.", evidence: ["independent"], confidence: "high" },
+      ]));
+
+      expect(html).toContain("Reviewed independent evidence materially supports this claim.");
+      expect(html).toContain("Reviewed evidence supports part of this claim, but not all of it.");
+      expect(html).toContain("Reviewed evidence materially conflicts with this claim.");
+      expect(html).toContain("Contrary source excerpt");
+    });
+
+    test("uses only recorded evidence states and preserves legacy due-diligence rendering", () => {
+      expect(externalEvidencePresentation({ externalEvidenceState: "not_attempted" }, []).label).toBe("No applicable adapter");
+      expect(externalEvidencePresentation({ externalEvidenceState: "not_attempted", evidencePlan: { items: [{ id: "safe" }] } }, []).label).toBe("Not attempted");
+      expect(externalEvidencePresentation({ externalEvidenceState: "unavailable" }, []).label).toBe("Unavailable evidence");
+      expect(claimStatusPresentation({ proposalAssertion: true, claimScope: "proposal_action" }).label).toBe("Proposal states");
+
+      const legacy = renderDueDiligence({ assessmentVersion: "2", overview: { purpose: "Legacy review.", requestedActions: [], assetsAffected: [], permissionsChanged: [], controlChanges: [] }, materialClaims: [{ id: "legacy", claim: "Legacy claim", sourceExcerpt: "Legacy source", status: "unverified", explanation: "No evidence.", evidence: [] }], findings: [], executionMap: [], unresolvedQuestions: [], evidence: [], reviewPriority: "low", reviewPriorityExplanation: "Review." });
+      expect(legacy).toContain("Legacy claim");
+      expect(legacy).toContain("Original source excerpt");
+      expect(legacy).not.toContain("claim-evidence-state");
     });
   });
 
@@ -401,8 +452,8 @@ describe("QuorumX frontend helpers", () => {
     expect(html).toContain("Secondary authority");
     expect(html).toContain("Provider-reported secondary evidence; not a cryptographic state/inclusion proof");
     expect(html).toContain("Not Identified");
-    expect(html).toContain("Proposal claim");
-    expect(html).toContain("External evidence: Retrieved");
+    expect(html).toContain("Claim");
+    expect(html).toContain("Completed verification");
     expect(html).not.toContain("on-chain verified");
   });
 
@@ -430,7 +481,7 @@ describe("QuorumX frontend helpers", () => {
     expect(html).toContain("QuorumX Due Diligence");
     expect(html).not.toContain("schema 3.1");
     expect(html).toContain("Returned-funds trace: Retrieved");
-    expect(html).toContain("Proposal claim");
+    expect(html).toContain("Original source excerpt");
     expect(html).toContain("Provider-reported transaction data matches the proposal row.");
     expect(html).toContain("Secondary authority");
     expect(html).toContain("Provider-reported secondary evidence; not a cryptographic state/inclusion proof");
@@ -457,7 +508,7 @@ describe("QuorumX frontend helpers", () => {
       materialClaims: [], findings: [], executionMap: [], unresolvedQuestions: [], safeguardGaps: [],
       reviewPriority: "low", reviewPriorityExplanation: "No material issue identified.",
     });
-    expect(html).toContain("External evidence: Retrieved");
+    expect(html).toContain("Completed verification");
     expect(html).toContain("Provider publicnode · Ethereum block 25000000");
     expect(html).toContain("Provider drpc · Ethereum block 25000000");
     expect(html).toContain("not a cryptographic state/inclusion proof");

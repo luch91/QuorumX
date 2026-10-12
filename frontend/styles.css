@@ -231,6 +231,25 @@ details.due-item summary strong { color: var(--gold-dark); white-space: nowrap; 
 .claim-contradicted summary strong { color: #9a3c2d; }
 details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item a:focus-visible { outline: 2px solid var(--gold-dark); outline-offset: 4px; }
 .due-item blockquote { margin: 15px 0; padding-left: 14px; border-left: 2px solid var(--gold); color: #514b41; }
+.material-claim { padding: 0; }
+.material-claim + .material-claim { border-top: 1px solid var(--line-light); }
+.material-claim summary { padding: 18px 0; }
+.material-claim-body { padding: 0 0 22px; }
+.material-claim-label, .material-claim-source figcaption { margin: 0 0 7px; color: #706a5f; font: 700 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.material-claim h4 { margin: 0 0 18px; font-size: clamp(19px,2.2vw,27px); line-height: 1.2; letter-spacing: -.025em; }
+.material-claim-origin { margin: -8px 0 18px; color: #625e55; font-size: 13px; }
+.material-claim-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px 24px; margin: 0; }
+.material-claim-facts > div { min-width: 0; padding: 13px 0; border-top: 1px solid var(--line-light); }
+.material-claim-facts dt { font: 700 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: #706a5f; }
+.material-claim-facts dd { margin: 7px 0 0; }
+.material-claim-facts dd > strong, .material-claim-facts dd > small { display: block; }
+.material-claim-facts dd > small { margin-top: 5px; color: #625e55; line-height: 1.45; }
+.material-claim-source { margin: 22px 0 0; }
+.material-claim-source blockquote { margin: 8px 0 0; }
+.claim-evidence-state { margin: 16px 0 4px; padding: 15px 17px; border-left: 3px solid var(--gold-dark); background: #f5eddd; color: var(--ink); }
+.claim-evidence-state > strong { display: block; font-size: 14px; }
+.claim-evidence-state p { margin: 6px 0 0; }
+.claim-evidence-state small { display: block; margin-top: 8px; color: #625e55; }
 .due-item dl { display: grid; grid-template-columns: 140px 1fr; gap: 11px 20px; }
 .due-item a, .due-evidence a { color: #725019; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .due-meta, .due-counts, .due-empty { color: #625e55; }
@@ -253,7 +272,7 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
 .due-priority h4 { margin: 20px 0 8px; }
 .due-priority ul { margin: 12px 0 18px; padding-left: 20px; }
 .due-priority small, .due-consensus { color: #615b50; line-height: 1.5; }
-@media (max-width: 700px) { .due-facts { grid-template-columns: 1fr; } .due-item dl, .due-steps dl, .due-evidence dl { grid-template-columns: 1fr; gap: 5px; } details.due-item summary { display: block; } .execution-consequences { padding: 15px; } .due-questions { padding-left: 14px; } }
+@media (max-width: 700px) { .due-facts, .material-claim-facts { grid-template-columns: 1fr; } .due-item dl, .due-steps dl, .due-evidence dl { grid-template-columns: 1fr; gap: 5px; } details.due-item summary { display: block; } details.material-claim summary strong { display: inline-block; margin-top: 8px; } .execution-consequences { padding: 15px; } .due-questions { padding-left: 14px; } }
 .record-layout { display: grid; grid-template-columns: minmax(0,1fr) 390px; }
 .record-body { padding: 0 clamp(28px,5vw,72px) 80px; }
 .record-tabs { position: sticky; top: 0; z-index: 2; display: flex; width: 100%; max-width: 100%; gap: 30px; overflow-x: auto; overscroll-behavior-inline: contain; padding: 12px 3px; border-bottom: 1px solid var(--line-light); background: var(--paper); scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
