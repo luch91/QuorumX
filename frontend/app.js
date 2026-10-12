@@ -36,6 +36,15 @@
   const assessmentSignal = (proposal) => ["2", "3"].includes(proposal.assessmentVersion)
     ? `${titleCase(proposal.reviewPriority)} review · ${proposal.findingCount ?? proposal.dueDiligence?.findings?.length ?? 0} findings`
     : proposal.riskLevel ? "Legacy risk assessment" : "Not yet reviewed";
+  const assessmentRecordLabel = (proposal) => {
+    if (proposal.assessmentVersion === "3") return "Format 3 due diligence";
+    if (proposal.assessmentVersion === "2") return "Proposal-grounded due diligence";
+    if (proposal.assessmentVersion === "1" || proposal.riskLevel) return "Legacy score record";
+    return "Assessment record";
+  };
+  const assessmentCount = (value, singular, plural) => Number.isInteger(value) && value >= 0
+    ? `${value} ${value === 1 ? singular : plural}`
+    : null;
   const isCurrentRequest = (currentGeneration, requestGeneration) => currentGeneration === requestGeneration;
   const mergeUniqueProposals = (current, incoming) => [...new Map([...current, ...incoming]
     .map((proposal) => [proposal.canonicalId, proposal])).values()];
@@ -242,7 +251,18 @@
   }
 
   function assessmentRow(proposal) {
-    return `<article class="assessment-row"><a href="${escapeHtml(proposalPath(proposal.canonicalId))}">${escapeHtml(proposal.title)}<small>${escapeHtml(proposal.daoName)}</small></a><span>${escapeHtml(assessmentSignal(proposal))}</span><span>${escapeHtml(["2", "3"].includes(proposal.assessmentVersion) ? "Consensus findings" : "Legacy model")}</span><span>${escapeHtml(formatDate(proposal.assessedAt))}</span><a class="proposal-title-button row-arrow" href="${escapeHtml(proposalPath(proposal.canonicalId))}" aria-label="Open assessment">→</a></article>`;
+    const counts = [
+      assessmentCount(proposal.findingCount, "finding", "findings"),
+      assessmentCount(proposal.unresolvedCount, "unresolved question", "unresolved questions"),
+    ].filter(Boolean);
+    const status = assessmentLabel(proposalLifecycle(proposal) ?? "finalized");
+    return `<article class="assessment-row">
+      <a class="assessment-summary" href="${escapeHtml(proposalPath(proposal.canonicalId))}"><span class="assessment-title">${escapeHtml(proposal.title)}</span><small>${escapeHtml(proposal.daoName)}</small></a>
+      <div class="assessment-state"><span class="badge badge-finalized">${escapeHtml(status)}</span><small>${escapeHtml(assessmentRecordLabel(proposal))}</small></div>
+      ${counts.length ? `<div class="assessment-counts" aria-label="Assessment contents">${counts.map((count) => `<span>${escapeHtml(count)}</span>`).join("")}</div>` : '<div class="assessment-counts" aria-label="Assessment contents"></div>'}
+      <time class="assessment-date" datetime="${escapeHtml(proposal.assessedAt ?? "")}">${escapeHtml(formatDate(proposal.assessedAt))}</time>
+      <a class="proposal-title-button row-arrow" href="${escapeHtml(proposalPath(proposal.canonicalId))}" aria-label="Open assessment for ${escapeHtml(proposal.title)}">→</a>
+    </article>`;
   }
 
   async function loadAssessments() {
@@ -750,7 +770,7 @@
   }
 
   return { init, buildProposalQuery, proposalMatchesSearch, proposalPath, isCurrentRequest, mergeUniqueProposals, particleBudget, daysUntil, short, safeHttpUrl, resolveApiBase,
-    assessmentLabel, assessmentSignal, renderDueDiligence, sourceCard, particleLayout, particleOrigin,
+    assessmentLabel, assessmentSignal, assessmentRecordLabel, assessmentCount, assessmentRow, renderDueDiligence, sourceCard, particleLayout, particleOrigin,
     fallbackLogoMask, resolveLogoMasks, boundedPixelRatio, shouldSettleLogoOrigins,
     syncSearchInputs, setSearchPanelOpen, proposalRoute, proposalRow, mobileProposal, setProposalMetadata, renderProposalError,
     renderSourceMarkdown };

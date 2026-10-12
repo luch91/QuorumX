@@ -157,9 +157,16 @@ h2 { margin: 0; font-size: clamp(40px,5vw,70px); line-height: .98; letter-spacin
 
 .assessments { background: #0c0c09; }
 .assessment-list { border-top: 1px solid var(--line); }
-.assessment-row { display: grid; grid-template-columns: 1.4fr .65fr .55fr .65fr auto; align-items: center; gap: 18px; min-height: 80px; border-bottom: 1px solid var(--line); }
+.assessment-row { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(150px,.75fr) minmax(150px,.8fr) minmax(96px,.5fr) auto; align-items: center; gap: 18px; min-height: 88px; border-bottom: 1px solid var(--line); }
 .assessment-row button, .assessment-row a { border: 0; background: none; color: var(--paper); text-align: left; font-weight: 700; text-decoration: none; }
+.assessment-row > * { min-width: 0; }
+.assessment-summary { overflow-wrap: anywhere; }
+.assessment-title { display: block; line-height: 1.38; }
 .assessment-row small { display: block; color: var(--muted); margin-top: 5px; }
+.assessment-state { display: grid; justify-items: start; gap: 3px; }
+.assessment-state small { margin: 0; font: 11px/1.35 var(--mono); overflow-wrap: anywhere; }
+.assessment-counts { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--gold-bright); font: 11px/1.35 var(--mono); }
+.assessment-date { color: var(--muted); font: 11px/1.35 var(--mono); }
 
 .dao-grid { display: grid; grid-template-columns: repeat(4,1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
 .dao-card { min-height: 250px; padding: 28px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -355,8 +362,12 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
   .mobile-card button, .mobile-card a { display: block; width: 100%; border: 0; background: none; color: var(--paper); padding: 0; text-align: left; text-decoration: none; }
   .mobile-card h3 { margin: 12px 0; font-size: 19px; }
   .mobile-card-meta { display: flex; flex-wrap: wrap; gap: 7px; }
-  .assessment-row { grid-template-columns: 1fr auto; padding: 17px 0; }
-  .assessment-row > *:nth-child(2), .assessment-row > *:nth-child(4) { display: none; }
+  .assessment-row { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "summary arrow" "state arrow" "counts arrow"; gap: 8px 14px; padding: 19px 0; align-items: start; }
+  .assessment-summary { grid-area: summary; }
+  .assessment-state { grid-area: state; }
+  .assessment-counts { grid-area: counts; }
+  .assessment-date { display: none; }
+  .assessment-row .row-arrow { grid-area: arrow; align-self: center; min-width: 28px; text-align: right; }
 }
 
 @media (max-width: 580px) {

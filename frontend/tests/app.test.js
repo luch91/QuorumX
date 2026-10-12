@@ -6,6 +6,9 @@ const {
   safeHttpUrl,
   short,
   assessmentSignal,
+  assessmentRecordLabel,
+  assessmentCount,
+  assessmentRow,
   renderDueDiligence,
   resolveApiBase,
   proposalPath,
@@ -32,6 +35,36 @@ describe("QuorumX frontend helpers", () => {
   test("uses an injected local API base and otherwise defaults to production", () => {
     expect(resolveApiBase({ QUORUMX_API_BASE: "/local-api/" })).toBe("/local-api");
     expect(resolveApiBase({})).toBe("/api");
+  });
+
+  describe("accepted assessment listing", () => {
+    test("shows accepted due-diligence metadata using supplied counts", () => {
+      const html = assessmentRow({ canonicalId: "snapshot:test:accepted", title: "A treasury proposal", daoName: "Arbitrum DAO", assessmentVersion: "3", assessmentLifecycleStatus: "finalized", assessedAt: "2026-10-12T00:00:00.000Z", findingCount: 2, unresolvedCount: 1 });
+
+      expect(html).toContain("Accepted");
+      expect(html).toContain("Format 3 due diligence");
+      expect(html).toContain("2 findings");
+      expect(html).toContain("1 unresolved question");
+      expect(html).toContain("/proposals/snapshot%3Atest%3Aaccepted");
+    });
+
+    test("keeps legacy records distinct and omits unavailable optional counts", () => {
+      const html = assessmentRow({ canonicalId: "snapshot:test:legacy", title: "A legacy record", daoName: "SafeDAO", assessmentVersion: "1", assessmentLifecycleStatus: "finalized", assessedAt: "2026-10-12T00:00:00.000Z", riskLevel: "high" });
+
+      expect(assessmentRecordLabel({ assessmentVersion: "1", riskLevel: "high" })).toBe("Legacy score record");
+      expect(assessmentCount(undefined, "finding", "findings")).toBeNull();
+      expect(html).toContain("Legacy score record");
+      expect(html).not.toContain("0 findings");
+      expect(html).not.toContain("0 unresolved questions");
+    });
+
+    test("keeps long titles and DAO names inside the dedicated assessment summary", () => {
+      const html = assessmentRow({ canonicalId: "snapshot:test:long", title: "A deliberately long governance proposal title that must remain readable in the accepted assessment list", daoName: "A DAO with a deliberately long display name", assessmentVersion: "2", assessedAt: "2026-10-12T00:00:00.000Z" });
+
+      expect(html).toContain("assessment-summary");
+      expect(html).toContain("Proposal-grounded due diligence");
+      expect(readFileSync(path.join(__dirname, "..", "styles.css"), "utf8")).toContain("grid-template-areas: \"summary arrow\"");
+    });
   });
 
   describe("particle hero layout contract", () => {
