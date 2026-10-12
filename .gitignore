@@ -13,6 +13,7 @@ __pycache__/
 .wrangler/
 workers/api/worker-configuration.d.ts
 frontend/particle_renderer.bundle.js
+frontend/markdown_renderer.bundle.js
 
 # Local receipt, request, and test evidence may contain real on-chain identifiers.
 # Export it deliberately; do not commit it by default.
