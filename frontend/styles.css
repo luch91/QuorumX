@@ -260,6 +260,21 @@ details.due-item summary:focus-visible, .due-evidence a:focus-visible, .due-item
 .record-facts dt { color: #6c675e; font: 11px var(--mono); text-transform: uppercase; }
 .record-facts dd { margin: 8px 0 0; overflow-wrap: anywhere; }
 .proposal-copy { white-space: pre-wrap; overflow-wrap: anywhere; color: #34322d; font: 16px/1.78 var(--sans); }
+.proposal-copy.is-markdown { white-space: normal; }
+.proposal-copy > :first-child, .source-markdown > :first-child { margin-top: 0; }
+.proposal-copy > :last-child, .source-markdown > :last-child { margin-bottom: 0; }
+.proposal-copy h1, .proposal-copy h2, .proposal-copy h3, .proposal-copy h4 { line-height: 1.15; letter-spacing: -.03em; }
+.proposal-copy h1 { font-size: clamp(27px, 4vw, 42px); }
+.proposal-copy h2 { font-size: clamp(23px, 3vw, 32px); }
+.proposal-copy h3 { font-size: 22px; }
+.proposal-copy ul, .proposal-copy ol, .source-markdown ul, .source-markdown ol { padding-left: 1.35em; }
+.proposal-copy blockquote, .source-markdown blockquote { margin: 1em 0; padding-left: 14px; border-left: 2px solid var(--gold); color: #514b41; }
+.proposal-copy a, .source-markdown a { color: #725019; overflow-wrap: anywhere; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.proposal-copy a:focus-visible, .source-markdown a:focus-visible { outline: 2px solid var(--gold-dark); outline-offset: 3px; }
+.proposal-copy code, .source-markdown code { padding: .12em .32em; border-radius: 3px; background: #eee8dc; font: .9em var(--mono); overflow-wrap: anywhere; }
+.proposal-copy pre, .source-markdown pre { max-width: 100%; overflow-x: auto; padding: 14px; background: #eee8dc; border-radius: 3px; }
+.proposal-copy pre code, .source-markdown pre code { padding: 0; background: transparent; overflow-wrap: normal; }
+.source-markdown { white-space: normal; }
 .due-diligence, .due-item, .due-item dd, .due-evidence, .record-hero, .dao-card { min-width: 0; overflow-wrap: anywhere; }
 .evidence-margin { padding: 52px 34px; border-left: 1px solid var(--line-light); background: #e7e2d8; }
 .evidence-margin h3 { margin: 0; font-size: 20px; }
