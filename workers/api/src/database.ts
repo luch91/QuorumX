@@ -332,6 +332,18 @@ export async function ingestSnapshotProposals(
           state: proposal.status,
         })),
       };
+      // Match the GenLayer schema 3.3/3.4 canonical material boundary exactly.
+      // Snapshot's HTTP response limit is distinct from the 24,000-byte
+      // contract material limit. Preserve the revision even when ineligible.
+      const canonicalMaterialBytes = new TextEncoder().encode(contractCanonicalJson({
+        id: proposal.externalId,
+        space: proposal.source.space,
+        title: proposal.title,
+        body: proposal.bodyText,
+        choices: proposal.choices,
+        state: proposal.status,
+      })).byteLength;
+      const fitsFormat3MaterialLimit = canonicalMaterialBytes <= 24_000;
       const contentHash = await sha256(canonicalJson(normalizedPayload));
       const revisionResult = await client.query<{ id: string; inserted: boolean }>(`
         with inserted as (
@@ -370,7 +382,7 @@ export async function ingestSnapshotProposals(
       // the bounded reassessment path.  Earlier non-v1 formats retain their
       // historical requeue behaviour for compatibility.
       const requeueExistingRevision = assessmentVersion !== "1" && assessmentSchemaVersion !== "3.4";
-      if (shouldAssess(proposal, now) && remainingBudget > 0
+      if ((assessmentVersion !== "3" || fitsFormat3MaterialLimit)\n        && shouldAssess(proposal, now) && remainingBudget > 0
         && (revisionInserted || requeueExistingRevision)) {
         const jobResult = await client.query(`
           insert into quorumx.assessment_jobs
