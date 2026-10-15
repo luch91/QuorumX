@@ -301,7 +301,7 @@ def json_response(response, source_name, max_bytes):
 
 
 def fetch_proposal_context(source):
-    """Retrieve consensus material plus close time without changing its content hash."""
+    """Retrieve consensus material plus close time from a byte-bounded response."""
     response = gl.nondet.web.get(snapshot_url(source["proposalId"]))
     proposal = json_response(response, "Snapshot", 64000).get("data", {}).get("proposal")
     if not proposal or proposal.get("id") != source["proposalId"] or proposal.get("space", {}).get("id") != source["space"]:
@@ -312,8 +312,6 @@ def fetch_proposal_context(source):
     material = canonical({"id": proposal["id"], "space": proposal["space"]["id"],
                           "title": proposal.get("title", ""), "body": proposal.get("body", ""),
                           "choices": proposal.get("choices", []), "state": proposal.get("state", "")})
-    if len(material.encode("utf-8")) > 24000:
-        raise ValueError("proposal material exceeds limit")
     return {"material": material, "proposalEnd": end}
 
 
