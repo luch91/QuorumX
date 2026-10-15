@@ -152,7 +152,7 @@ its accepted state is verified.
 The active schema 3.3 contract is deployed on Studionet at:
 
 ~~~text
-0x319e020B2cf81a5c1D7E6d8F831B8F0c531ea860
+0x7a0a7384B24C8dbb896F305cc3e055eF7a8fDe8F
 ~~~
 
 The isolated schema 3.4 contract is deployed at:

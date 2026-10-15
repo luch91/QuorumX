@@ -30,16 +30,19 @@ historical immutable records can be decoded exactly. New compatible product
 work remains format 3 and does not create a new public decimal version.
 
 The active production-routed Format 3 contract is
-`0x319e020B2cf81a5c1D7E6d8F831B8F0c531ea860` (deployment transaction
-`0x8db0a0e5be933c1fb025e1a8431b1d60eb912a86b543ed13cf12700320da12ae`). It
-replaced the prior format 3.3 address,
+`0x7a0a7384B24C8dbb896F305cc3e055eF7a8fDe8F` (deployment transaction
+`0x13c002a85fabe2056b1506c5406adcbee10cf842ee12071f32160c9db165fb6b`).
+It replaced `0x319e020B2cf81a5c1D7E6d8F831B8F0c531ea860` (deployment transaction
+`0x8db0a0e5be933c1fb025e1a8431b1d60eb912a86b543ed13cf12700320da12ae`)
+after its narrower 24 KB canonical-material guard rejected a valid bounded
+Snapshot response. Snapshot responses remain capped at 64 KB before parsing.
+The preceding schema 3.3 address was
 `0xf183c38364Bc92726E54d3639a6c4f8d107630c7` (deployment transaction
-`0x600796d8eafe99df247004bd8f400b531884894adef8de540409b3bb4befdb50`), for
-the long-proposal passage-boundary correction. This does not change the public
-format or schema label: both deployments use format 3, schema 3.3. The prior
-address, its evaluation contracts, and its accepted records remain historical
-and immutable. Fixed provider evidence is secondary; it is not represented as a
-cryptographic state or inclusion proof.
+`0x600796d8eafe99df247004bd8f400b531884894adef8de540409b3bb4befdb50`).
+These replacements do not change the public format or schema label. Prior
+addresses, their evaluation contracts, and accepted records remain historical
+and immutable. Fixed provider evidence is secondary; it is not represented as
+a cryptographic state or inclusion proof.
 
 Schema 3.4 is deployed separately on Studionet at
 `0x312310d6D2aFA84bC55A7D6fAc68a623cBDD11c4` (deployment transaction

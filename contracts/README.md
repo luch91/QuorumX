@@ -48,20 +48,20 @@ The immutable Format 3 contract currently selected for ordinary production
 processing is deployed on Studionet at:
 
 ~~~text
-0x319e020B2cf81a5c1D7E6d8F831B8F0c531ea860
+0x7a0a7384B24C8dbb896F305cc3e055eF7a8fDe8F
 ~~~
 
 Deployment transaction:
 
 ~~~text
-0x8db0a0e5be933c1fb025e1a8431b1d60eb912a86b543ed13cf12700320da12ae
+0x13c002a85fabe2056b1506c5406adcbee10cf842ee12071f32160c9db165fb6b
 ~~~
 
-This deployment replaced `0xf183c38364Bc92726E54d3639a6c4f8d107630c7` for the
-long-proposal passage-boundary correction. Complete canonical material remains
-capped at 24 KB, while dense line formatting no longer rejects otherwise
-admissible material. The previous address and all records it accepted remain
-historical and immutable.
+This deployment replaced `0x319e020B2cf81a5c1D7E6d8F831B8F0c531ea860`
+after the narrower 24 KB canonical-material guard rejected a valid response.
+Snapshot responses remain capped at 64 KB before parsing, while complete
+material within that response boundary is assessed. The previous address and
+all records it accepted remain historical and immutable.
 
 Schema 3.3 stores records by immutable assessment-run ID and supports
 schema-specific reads for historical compatibility. Validators independently
