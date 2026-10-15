@@ -99,7 +99,7 @@ jobs:
         run: npm run test:organization:teardown -- --run-id "$QUORUMX_RUN_ID"
       - name: Upload redacted failure evidence
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: velvet-solace-${{ env.QUORUMX_RUN_ID }}
           path: .quorumx-e2e/${{ env.QUORUMX_RUN_ID }}/
