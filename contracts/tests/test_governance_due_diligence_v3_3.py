@@ -191,14 +191,15 @@ class DueDiligenceV33Test(unittest.TestCase):
                 )
                 self.assertEqual(self.m.digest(self.m.canonical(report)), digest)
 
-    def test_existing_24kb_material_limit_still_rejects_oversize_proposal(self):
-        source = {"kind": "snapshot", "space": "safe.eth", "proposalId": "oversize"}
+    def test_proposal_over_24kb_is_accepted_with_complete_material(self):
+        source = {"kind": "snapshot", "space": "safe.eth", "proposalId": "dense"}
+        body = "x" * 25000
 
         class Response:
             status = 200
             headers = {"content-type": b"application/json"}
             body = json.dumps({"data": {"proposal": {
-                "id": "oversize", "space": {"id": "safe.eth"}, "title": "Oversize",
+                "id": "dense", "space": {"id": "safe.eth"}, "title": "Dense",
                 "body": "x" * 25000, "choices": [], "state": "closed", "end": 1,
             }}}).encode("utf-8")
 
@@ -206,7 +207,29 @@ class DueDiligenceV33Test(unittest.TestCase):
         try:
             self.m.gl = types.SimpleNamespace(nondet=types.SimpleNamespace(
                 web=types.SimpleNamespace(get=lambda _url: Response())))
-            with self.assertRaisesRegex(ValueError, "proposal material exceeds limit"):
+            context = self.m.fetch_proposal_context(source)
+            self.assertEqual(json.loads(context["material"])["body"], body)
+            self.assertGreater(len(context["material"].encode("utf-8")), 24000)
+            self.assertEqual(context["proposalEnd"], 1)
+        finally:
+            self.m.gl = original_gl
+
+    def test_proposal_response_remains_bounded_at_64kb(self):
+        source = {"kind": "snapshot", "space": "safe.eth", "proposalId": "oversize"}
+
+        class Response:
+            status = 200
+            headers = {"content-type": b"application/json"}
+            body = json.dumps({"data": {"proposal": {
+                "id": "oversize", "space": {"id": "safe.eth"}, "title": "Oversize",
+                "body": "x" * 65000, "choices": [], "state": "closed", "end": 1,
+            }}}).encode("utf-8")
+
+        original_gl = self.m.gl
+        try:
+            self.m.gl = types.SimpleNamespace(nondet=types.SimpleNamespace(
+                web=types.SimpleNamespace(get=lambda _url: Response())))
+            with self.assertRaisesRegex(ValueError, "Snapshot response exceeds limit"):
                 self.m.fetch_proposal_context(source)
         finally:
             self.m.gl = original_gl
