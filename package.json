@@ -62,7 +62,7 @@
     "markdown-it": "14.3.2",
     "pg": "^8.16.3",
     "three": "0.186.1",
-    "viem": "^2.56.9"
+    "viem": "^2.57.7"
   },
   "overrides": {
     "handlebars": "4.7.10",
