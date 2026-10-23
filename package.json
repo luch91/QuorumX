@@ -48,7 +48,7 @@
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@types/jest": "^30.0.0",
-    "@types/pg": "^8.15.5",
+    "@types/pg": "^8.23.1",
     "axe-core": "^4.14.0",
     "esbuild": "^0.28.1",
     "jest": "^30.5.2",
@@ -60,7 +60,7 @@
   "dependencies": {
     "genlayer-js": "1.1.8",
     "markdown-it": "14.3.2",
-    "pg": "^8.16.3",
+    "pg": "^8.23.1",
     "three": "0.186.1",
     "viem": "^2.56.9"
   },
